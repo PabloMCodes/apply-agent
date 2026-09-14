@@ -85,9 +85,10 @@ answers. Missing required inputs or ambiguous navigation pause the flow. It stop
 at a recognized final Submit button, with or without an employer review page.
 This is best-effort coverage, not a guarantee that every application website works.
 
-Greenhouse custom controls, multi-selects, login challenges, or CAPTCHAs may require
-manual completion on the employer site. Unsupported required controls block the
-submission action. There is no remote desktop/CAPTCHA takeover interface yet.
+Custom controls, multi-selects, login challenges, or CAPTCHAs may require your help.
+Use **Open live browser** to operate supported controls in the same server session.
+Unknown buttons and arbitrary canvas interactions remain unsupported; this is not
+a full remote desktop. Unsupported required controls block submission.
 Opening the employer link on your phone creates a separate session and does **not**
 transfer the filled form; use Apply Agent's review page for supported applications.
 
@@ -207,14 +208,61 @@ title and reason, and provides a download of the frozen file actually used.
 
 Optional AI uses an OpenAI-compatible Chat Completions endpoint, including local
 models. Configure the API base URL, model name, and optional key in Profile.
-The adapter does not log into ChatGPT Plus or use a consumer subscription token.
+The model adapter does not log into ChatGPT Plus or use a consumer subscription token.
 Provider API access must be configured separately. See the official
 [API reference](https://developers.openai.com/api/reference/resources/chat).
 Other providers with different protocols need another adapter.
 
-AI runs only when you click **Suggest answer with AI**. It receives no browser
+AI answer drafting runs when you click **Suggest answer with AI**. Optional browser
+field mapping also runs during preparation if separately enabled in Profile. It receives no browser
 credentials or tools and cannot navigate or submit. Responses need known source
 references and valid employer choices. Missing evidence, malformed responses,
 and provider failures leave the form unchanged. Source references do not prove a
 draft is accurate: inspect the shown evidence, copy/edit the draft, and confirm it.
 Identity, authorization, and consent questions are excluded from AI drafting.
+
+
+### Live browser takeover and saved logins
+
+Unfamiliar or login pages remain open with status `takeover`. Open the application
+and choose **Open live browser**. The viewport is the worker's actual browser:
+
+1. Click an input in the image, enter text in the protected text box below it, and
+   press **Type into selected field**. Scroll/zoom controls help on phones.
+2. Click supported sign-in, verification, Next/Back, or OAuth controls. Select a
+   popup tab if the identity provider opens one. **Refresh browser** updates the view.
+3. After signing in, optionally choose **Remember this site login**. Then choose
+   **Resume worker / review**. Your current browser and earlier recorded pages remain.
+4. For an unfamiliar form, **Use AI on this application page** maps fields to exact
+   saved contact/professional facts. In Profile, you can separately enable this
+   mapping during preparation. It requires a configured compatible model.
+5. If the final button is unrecognized, enable **Mark final submit button** and click
+   it in the image. Marking does not click it. Resume review and use the separate
+   submission confirmation. The takeover controls block recognized final actions.
+
+The selected frozen resume can be attached by enabling the upload mode and clicking
+an actual file input/label. No arbitrary server filesystem path can be requested.
+Typed browser text is queued only in memory, not SQLite. Password/code values are
+redacted from form snapshots. Live viewport images are returned in memory rather
+than stored as login screenshots. Existing application screenshots remain local.
+
+Saved browser state is encrypted with Fernet, expires locally after seven days,
+and is reused only for the exact application origin. Cookies/local storage/IndexedDB
+can retain authentication; device-bound credentials and some session-storage flows
+may require another login. Each application still has an isolated browser context.
+Use **Profile → Remembered site logins → Forget site login** to remove stored state;
+this does not sign out an already-open context or revoke the employer's session.
+The encryption key is stored with restricted permissions in the same local data
+volume: it does not protect against someone who can read both the state and key.
+
+These capabilities broaden coverage; they do not guarantee Google, Microsoft, or
+any other specific site's current login flow. Some identity providers reject
+browser automation or require unsupported device verification. No real account
+login or employer submission is part of the test suite. AI plans are tested with
+mock responses, not a configured live model. AI cannot execute JavaScript, arbitrary
+selectors, navigation, or submission; its field references and source keys are
+validated and mapped answers require review.
+
+Implementation references: [Playwright authentication](https://playwright.dev/python/docs/auth),
+[storage state](https://playwright.dev/python/docs/api/class-browsercontext#browser-context-storage-state),
+[Fernet](https://cryptography.io/en/latest/fernet/).

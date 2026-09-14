@@ -1,14 +1,15 @@
 """Local setup API used by the bundled web interface."""
 
 import secrets
+import asyncio
 import sqlite3
 import time
 from urllib.parse import urlparse
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Response
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Response, Request
 from fastapi.responses import FileResponse
 
 from src.setup import store, resume, resume_profile
-from src.setup.schemas import Preferences, SourceInput, SourceUpdate, TelegramConnect, EditField, ReviewAction, FieldOptions, PrepareBatch, BulkJobs, ResumeUpdate, AISettings, Navigate, SuggestAnswer
+from src.setup.schemas import Preferences, SourceInput, SourceUpdate, TelegramConnect, EditField, ReviewAction, FieldOptions, PrepareBatch, BulkJobs, ResumeUpdate, AISettings, Navigate, SuggestAnswer, BrowserControl, ForgetSession
 from src.db import database as db
 from src.jobs.sources import classify, load_source
 from src.jobs.fetch import FetchError
@@ -273,6 +274,33 @@ def router(path):
     @routes.delete('/saved-answers/{answer_id}', status_code=204)
     def delete_answer(answer_id: int):
         answers.forget(path, answer_id)
+        return Response(status_code=204)
+
+    @routes.post('/applications/{app_id}/browser')
+    async def browser_control(app_id: int, body: BrowserControl, request: Request):
+        runtime = getattr(request.app.state, 'runtime', None)
+        if runtime is None:
+            raise HTTPException(503,'Browser worker is not running.')
+        try:
+            future = runtime.browser.request_control(app_id, body.model_dump())
+            return await asyncio.wait_for(asyncio.wrap_future(future),timeout=65)
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(409,str(exc)) from None
+        except asyncio.TimeoutError:
+            raise HTTPException(504,'Browser is busy. Refresh before issuing another action.') from None
+
+    @routes.get('/browser-sessions')
+    def browser_sessions():
+        from src.applications.session_vault import SessionVault
+        return SessionVault(path).list()
+
+    @routes.post('/browser-sessions/forget', status_code=204)
+    def forget_browser_session(body: ForgetSession):
+        from src.applications.session_vault import SessionVault
+        try:
+            SessionVault(path).forget(str(body.origin))
+        except ValueError as exc:
+            raise HTTPException(422,str(exc)) from None
         return Response(status_code=204)
 
     @routes.get('/applications/{app_id}')

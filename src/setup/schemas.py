@@ -76,6 +76,7 @@ class SuggestAnswer(ReviewAction):
 
 
 class AISettings(InputModel):
+    browser_assistance: bool = False
     enabled: bool = False
     base_url: str = Field(default='', max_length=2000)
     model: str = Field(default='', max_length=200)
@@ -92,3 +93,18 @@ class AISettings(InputModel):
             if parsed.scheme != 'https' and not (parsed.scheme == 'http' and parsed.hostname in ('localhost','127.0.0.1','::1')):
                 raise ValueError('Use HTTPS, or HTTP for a local model on localhost.')
         return value.rstrip('/')
+
+
+class BrowserControl(InputModel):
+    operation: Literal['start','refresh','click','type','scroll','key','tab','save_session','resume','ai','mark_final','upload_resume']
+    token: str = Field(default='',max_length=100)
+    x: float = Field(default=0,ge=0,le=1100)
+    y: float = Field(default=0,ge=0,le=850)
+    text: str = Field(default='',max_length=20000,repr=False)
+    delta: int = Field(default=0,ge=-2000,le=2000)
+    key: Literal['Tab','Escape','Backspace','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'] = 'Tab'
+    tab: int = Field(default=0,ge=0,le=20)
+
+
+class ForgetSession(InputModel):
+    origin: HttpUrl

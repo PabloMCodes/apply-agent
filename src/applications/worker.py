@@ -1,7 +1,10 @@
 """Own all Playwright sessions on one thread. Prepare sequentially and retain up to five live reviews for two hours."""
 
 import json
+from concurrent.futures import Future
+from queue import Queue, Empty, Full
 import logging
+import re
 import os
 from pathlib import Path
 import shutil
@@ -9,6 +12,9 @@ import time
 
 from src.applications import store, answers, questions
 from src.applications.greenhouse import GreenhouseSession
+from src.applications.generic import GenericSession
+from src.applications.session_vault import SessionVault
+from src.applications import takeover
 from src.applications.standard import StandardFormSession
 from src.applications.discovery import discover, valid_entry_url, UnsupportedForm
 from src.applications.network import public_request
@@ -25,6 +31,9 @@ class BrowserWorker:
         self.sessions = {}
         self.browser = None
         self.playwright = None
+        self.controls = Queue(maxsize=32)
+        self.in_control = False
+        self.vault = SessionVault(path)
 
     def start_browser(self):
         if self.browser is None:
@@ -36,6 +45,8 @@ class BrowserWorker:
             self.browser = self.playwright.chromium.launch(headless=True, channel=os.environ.get('BROWSER_CHANNEL') or None)
 
     def capture(self, app_id, session):
+        if takeover.login_page(session.page):
+            raise takeover.NeedsTakeover('Login or verification requires browser takeover.')
         directory = self.path.parent / 'applications' / str(app_id)
         directory.mkdir(parents=True, exist_ok=True)
         # Rename so the API never serves half-written screenshots.
@@ -46,6 +57,7 @@ class BrowserWorker:
         snapshot['expires_at'] = self.sessions[app_id]['expires']
         snapshot['entry_url'] = self.sessions[app_id].get('entry_url', session.page.url)
         snapshot['pages'] = [dict(value, page_number=number) for number,value in sorted(session.history.items()) if number != session.page_number]
+        snapshot['ai_message'] = self.sessions[app_id].get('ai_message','')
         snapshot['resume'] = self.sessions[app_id].get('resume')
         snapshot['adapter'] = self.sessions[app_id].get('adapter', 'greenhouse')
         return snapshot
@@ -66,7 +78,10 @@ class BrowserWorker:
         store.set_run(self.path, app_id, 'preparing', message='Opening the application and filling confirmed profile details.')
         try:
             self.start_browser()
-            context = self.browser.new_context(viewport={'width': 1100, 'height': 850}, service_workers='block')
+            saved_state = self.vault.load(url)
+            context_options = {'viewport':{'width':1100,'height':850},'service_workers':'block'}
+            if saved_state: context_options['storage_state'] = saved_state
+            context = self.browser.new_context(**context_options)
             # Career pages can redirect to external ATS providers, but never private services.
             def guard(route):
                 request = route.request
@@ -77,9 +92,17 @@ class BrowserWorker:
             page = context.new_page()
             page.set_default_timeout(5000)
             context.route('**/*', guard)
-            self.sessions[app_id] = {'context': context, 'session': None, 'expires': time.time() + 7200}
+            self.sessions[app_id] = {'context': context, 'session': GenericSession(page), 'expires': time.time() + 7200, 'entry_url':url,'adapter':'generic'}
+            self.freeze_resume(app_id,record)
             page.goto(url, wait_until='load', timeout=30000)
-            adapter, resolved_url = discover(page)
+            if takeover.login_page(page):
+                self.pause_for_takeover(app_id,'Sign in using the live browser, then resume preparation.')
+                return
+            try:
+                adapter, resolved_url = discover(page)
+            except UnsupportedForm:
+                self.pause_for_takeover(app_id, 'This page needs your help. Open the live browser to sign in or operate the form, then resume preparation.')
+                return
             if adapter == 'greenhouse' and page.url != resolved_url:
                 page.goto(resolved_url, wait_until='load', timeout=30000)
             session = GreenhouseSession(page) if adapter == 'greenhouse' else StandardFormSession(page)
@@ -93,17 +116,6 @@ class BrowserWorker:
                     const email = document.querySelector('input[id="email"], input[name="email"]');
                     return email && Object.keys(email).some(key => key.startsWith('__reactProps'));
                 }""", timeout=10000)
-            resume, reason = resumes.choose(self.path, app_id, record['title'] or '')
-            self.sessions[app_id]['resume'] = {'id':resume['id'],'title':resume['title'],'reason':reason} if resume else None
-            resume_path = None
-            if resume:
-                directory = self.path.parent / 'applications' / str(app_id)
-                directory.mkdir(parents=True, exist_ok=True)
-                for suffix in ('.pdf','.txt'):
-                    (directory / ('resume'+suffix)).unlink(missing_ok=True)
-                resume_path = directory / ('resume' + Path(resume['filename']).suffix)
-                shutil.copyfile(self.path.parent / 'resumes' / resume['filename'], resume_path)
-            self.sessions[app_id]['resume_path'] = resume_path
             self.fill_pages(app_id, profile, record['company'] or '')
             page.wait_for_timeout(800)
             self.sessions[app_id]['expires'] = time.time() + 7200
@@ -111,21 +123,53 @@ class BrowserWorker:
             snapshot['entry_url'] = url
             snapshot['adapter'] = adapter
             store.set_run(self.path, app_id, 'ready', snapshot, 'Prepared. Review all answers and the screenshot before submitting.', notify=True)
+        except takeover.NeedsTakeover as exc:
+            self.pause_for_takeover(app_id,str(exc))
         except ValueError as exc:
             self.close(app_id)
             store.set_run(self.path, app_id, 'unsupported' if isinstance(exc,UnsupportedForm) else 'needs_attention', message=str(exc), notify=True)
         except Exception as exc:
+            if app_id in self.sessions and self.sessions[app_id].get('session'):
+                self.pause_for_takeover(app_id, 'Automatic preparation paused. Open the live browser to inspect the page and continue.')
+                return
             self.close(app_id)
             logger.warning('Application %s preparation failed (%s).', app_id, type(exc).__name__)
             store.set_run(self.path, app_id, 'error', message='Could not prepare this form. Check that Chromium is installed and the job is still open. Custom forms may need manual completion.', notify=True)
 
+    def freeze_resume(self, app_id, record):
+        resume, reason = resumes.choose(self.path, app_id, record['title'] or '')
+        self.sessions[app_id]['resume'] = {'id':resume['id'],'title':resume['title'],'reason':reason} if resume else None
+        resume_path = None
+        if resume:
+            directory = self.path.parent / 'applications' / str(app_id)
+            directory.mkdir(parents=True, exist_ok=True)
+            for suffix in ('.pdf','.txt'):
+                (directory / ('resume'+suffix)).unlink(missing_ok=True)
+            resume_path = directory / ('resume' + Path(resume['filename']).suffix)
+            shutil.copyfile(self.path.parent / 'resumes' / resume['filename'], resume_path)
+        self.sessions[app_id]['resume_path'] = resume_path
+
     def fill_pages(self, app_id, profile, company, advance=True):
         session = self.sessions[app_id]['session']
         for _ in range(20):
+            if not self.in_control:self.service_control()
+            if takeover.login_page(session.page):
+                raise takeover.NeedsTakeover('Login or verification requires browser takeover.')
             session.autofill(profile, self.sessions[app_id].get('resume_path'))
             questions.flag_conflicts(self.path, profile, session, company)
             session.reused_answers.update(answers.apply(self.path, session, company))
             questions.apply(profile, session)
+            ai_config=settings.get(self.path,'ai',{})
+            if ai_config.get('enabled') and ai_config.get('browser_assistance'):
+                page_key=(session.page.url,session.page_number)
+                seen=self.sessions[app_id].setdefault('ai_pages',set())
+                if page_key not in seen:
+                    seen.add(page_key)
+                    try:
+                        from src.ai.browser_plan import propose,apply
+                        apply(session,profile,propose(self.path,session,profile))
+                    except ValueError:
+                        self.sessions[app_id]['ai_message']='AI field mapping was unavailable. Unanswered fields need your review.'
             snapshot = session.snapshot()
             if not advance or session.submit_button() is not None or not snapshot['can_next'] or self.stop.is_set():
                 break
@@ -135,6 +179,119 @@ class BrowserWorker:
                 session.navigate('next')
             except ValueError:
                 break
+
+    def pause_for_takeover(self, app_id, message):
+        entry = self.sessions[app_id]
+        previous = store.get(self.path,app_id)['snapshot']
+        snapshot = dict(previous, adapter=entry['adapter'],can_submit=False,takeover=True,
+                        url=takeover.clean_url(entry['session'].page.url),expires_at=entry['expires'])
+        # Never persist screenshots or form values from a login page.
+        store.set_run(self.path,app_id,'takeover',snapshot,message,notify=True)
+
+    def request_control(self,app_id,payload):
+        future=Future()
+        try:self.controls.put_nowait((app_id,payload,future))
+        except Full:raise ValueError('Browser command queue is full. Try again shortly.') from None
+        return future
+
+    def service_control(self):
+        try:app_id,payload,future=self.controls.get_nowait()
+        except Empty:return False
+        try:
+            if future.set_running_or_notify_cancel():
+                try:
+                    self.in_control=True
+                    future.set_result(self.control(app_id,payload))
+                except ValueError as exc:future.set_exception(ValueError(str(exc)))
+                except Exception:future.set_exception(ValueError('The browser action could not complete. Refresh the view before continuing.'))
+        finally:
+            self.in_control=False
+            payload.clear()  # Do not retain typed passwords or verification codes.
+            self.controls.task_done()
+        return True
+
+    def control(self,app_id,payload):
+        entry=self.sessions.get(app_id)
+        record=store.get(self.path,app_id)
+        if not entry or not record or record['status'] not in ('ready','takeover'):
+            raise ValueError('No live browser session. Prepare the application again.')
+        if record.get('job_status') in (None,'skipped','applied'):
+            raise ValueError('This job was removed, skipped, or marked applied. Close this browser session.')
+        if time.time()>entry['expires']:
+            raise ValueError('This review session expired. Prepare the application again.')
+        operation=payload['operation'];session=entry['session'];page=session.page
+        if page.is_closed():
+            pages=[p for p in entry['context'].pages if not p.is_closed()]
+            if not pages:raise ValueError('All browser tabs were closed. Prepare the application again.')
+            page=pages[-1];session=entry.get('tab_sessions',{}).get(page) or GenericSession(page)
+            entry['session']=session;entry['adapter']='generic' if isinstance(session,GenericSession) else entry['adapter']
+        if operation=='start':
+            if record['status']=='ready':self.pause_for_takeover(app_id,'You control the browser. Resume preparation when finished.')
+            return takeover.image_frame(entry)
+        if record['status']!='takeover':raise ValueError('Open browser takeover before operating this page.')
+        if operation!='refresh' and payload.get('token')!=entry.get('control_token'):
+            raise ValueError('The browser view changed. Refresh before another action.')
+        if operation in ('click','type','key','mark_final','upload_resume') and entry.get('view_signature') != takeover.view_signature(page):
+            raise ValueError('The page changed since the screenshot. Refresh before interacting.')
+        message=''
+        if operation in ('click','mark_final'):
+            message=takeover.click_target(session,payload['x'],payload['y'],operation=='mark_final')
+        elif operation=='upload_resume':
+            if takeover.login_page(page):raise ValueError('Finish login before uploading a resume.')
+            target=takeover.at_point(page,payload['x'],payload['y'])
+            if not entry.get('resume_path'):raise ValueError('Choose a resume and prepare this application again.')
+            if target.evaluate("e=>e.tagName==='INPUT' && e.type==='file'"):
+                target.set_input_files(str(entry['resume_path']))
+            elif re.fullmatch(r'attach|upload|upload resume|choose file|choose resume|browse|resume/cv',target.inner_text().strip(),re.I):
+                with page.expect_file_chooser(timeout=5000) as chooser:
+                    target.click(timeout=5000)
+                chooser.value.set_files(str(entry['resume_path']))
+            else:
+                raise ValueError('Click the resume file input, its label, or a supported upload button.')
+            message='Uploaded the selected resume. Review the employer form.'
+        elif operation=='type':takeover.type_text(page,payload['text'])
+        elif operation=='scroll':page.mouse.wheel(0,payload['delta'])
+        elif operation=='key':page.keyboard.press(payload['key'])
+        elif operation=='tab':
+            tabs=entry['context'].pages
+            if payload['tab']>=len(tabs):raise ValueError('Tab is no longer available.')
+            saved_tabs=entry.setdefault('tab_sessions',{})
+            saved_tabs[session.page]=session
+            selected=tabs[payload['tab']];selected.bring_to_front()
+            entry['session']=saved_tabs.get(selected) or GenericSession(selected)
+            entry['adapter']='generic' if isinstance(entry['session'],GenericSession) else 'standard' if isinstance(entry['session'],StandardFormSession) else 'greenhouse'
+        elif operation=='save_session':
+            if takeover.login_page(page):raise ValueError('Finish signing in before saving this session.')
+            self.vault.save(entry['entry_url'],entry['context'].storage_state(indexed_db=True))
+            message='Session saved for this application site for up to seven days.'
+        elif operation in ('resume','ai'):
+            if takeover.login_page(page):raise ValueError('Finish signing in or verification before resuming.')
+            if operation=='resume' and not getattr(session,'final_target',None):
+                try:
+                    adapter,url=discover(page,timeout=.5)
+                    if url!=page.url:page.goto(url,wait_until='domcontentloaded',timeout=20000)
+                    replacement=GreenhouseSession(page) if adapter=='greenhouse' else StandardFormSession(page)
+                    replacement.history=session.history;replacement.page_number=session.page_number
+                    replacement.field_reviews=session.field_reviews;replacement.reused_answers=session.reused_answers
+                    session=replacement;entry['session']=session;entry['adapter']=adapter
+                except UnsupportedForm:
+                    if not isinstance(session,GenericSession):
+                        replacement=GenericSession(page);replacement.history=session.history;replacement.page_number=session.page_number
+                        session=replacement;entry['session']=session;entry['adapter']='generic'
+            profile=get_profile(self.path) or {}
+            self.fill_pages(app_id,profile,record['company'] or '',advance=False)
+            if operation=='ai':
+                from src.ai.browser_plan import propose,apply
+                plan=propose(self.path,session,profile)
+                filled=apply(session,profile,plan)
+                message=f'AI mapped {filled} fields to saved facts. Check every marked answer.'
+            else:message='Preparation resumed. Review the current page and all earlier answers.'
+            self.fill_pages(app_id,profile,record['company'] or '',advance=True)
+            store.set_run(self.path,app_id,'ready',self.capture(app_id,session),message)
+            return {'resumed':True,'message':message}
+        elif operation!='refresh':raise ValueError('Unsupported browser operation.')
+        entry['session'].page.wait_for_timeout(150)
+        return dict(takeover.image_frame(entry),message=message)
 
     def close(self, app_id):
         session = self.sessions.pop(app_id, None)
@@ -235,6 +392,8 @@ class BrowserWorker:
                             record = store.get(self.path, app_id)
                             self.close(app_id)
                             store.set_run(self.path, app_id, 'expired', record['snapshot'], 'Review session expired after two hours. Prepare it again to continue.', notify=True)
+                    if self.service_control():
+                        continue
                     command = store.next_command(self.path)
                     if command:
                         try:
@@ -255,6 +414,10 @@ class BrowserWorker:
                     logger.warning('Browser worker will retry after %s.', type(exc).__name__)
                 self.stop.wait(1)
         finally:
+            while not self.controls.empty():
+                _,payload,future=self.controls.get_nowait()
+                payload.clear()
+                future.cancel()
             for app_id in list(self.sessions):
                 self.close(app_id)
             if self.browser:

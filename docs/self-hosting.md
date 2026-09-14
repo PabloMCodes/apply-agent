@@ -82,8 +82,9 @@ shown as unknown. Check email/the employer before doing anything else in that ca
 
 The review screen is a mobile interface to the server's live browser, not a browser
 session copied to your phone. Screenshots/standard controls work there. This version
-does not stream a fully interactive remote desktop; CAPTCHA and unsupported widget
-flows require manual completion on the employer site.
+provides a live browser viewport with supported clicks, typing, scrolling, and tab
+switching. It does not stream a full remote desktop; arbitrary canvas interactions,
+some CAPTCHA widgets, and device-bound login flows may still need another adapter.
 
 ## Upgrade from the earlier worker-only scaffold
 
@@ -133,3 +134,25 @@ cloud account is provisioned by this project.
 References: [Telegram Bot API](https://core.telegram.org/bots/api),
 [Docker installation](https://docs.docker.com/engine/install/),
 [Playwright browsers](https://playwright.dev/python/docs/browsers).
+
+
+## Browser takeover and credentials
+
+The browser control API is private-installation only, like the rest of this app.
+Use a trusted private connection and HTTPS when accessing it across a network.
+Passwords and MFA text use a bounded in-memory queue; they are not saved as SQLite
+commands. Browser snapshots redact password/code controls. Live login images are
+served as transient response data and should not be logged by a reverse proxy.
+
+Opt-in saved sessions live in `data/browser-sessions` as encrypted `.enc` files.
+The local `key` file is mode 0600 and the directory mode 0700. Backups containing
+both can decrypt the sessions, so protect the whole volume. These files are already
+excluded from Git and Docker build context by the existing data-directory rules.
+Sessions are scoped to exact application origin and expire locally after seven days.
+The app does not import your normal Chrome profile, store typed passwords, or bypass
+identity-provider verification. Forgetting a saved session leaves existing open
+browser contexts active until closed.
+
+Upgrade native installations with `python -m pip install -r requirements.txt` to
+install the cryptography dependency. Docker builds install it automatically. Finish
+live reviews before restarting; takeover sessions also expire on restart.

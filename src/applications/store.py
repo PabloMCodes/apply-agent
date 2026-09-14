@@ -6,7 +6,7 @@ from src.db.database import connect
 from src.telegram.store import enqueue
 from src.setup.store import preferences
 
-ACTIVE = ('preparing', 'ready', 'submitting')
+ACTIVE = ('preparing', 'ready', 'takeover', 'submitting')
 
 
 def initialize(path):
@@ -47,7 +47,7 @@ def queue_job(path, job_id, resume_id=None):
         row = conn.execute('SELECT id FROM application_queue WHERE application_url=?', (job['application_url'],)).fetchone()
         if resume_id is not None:
             existing = conn.execute('SELECT status FROM application_runs WHERE id=?',(row['id'],)).fetchone()
-            if existing and existing['status'] in ('preparing','ready','submitting','submitted','submission_unknown'):
+            if existing and existing['status'] in ('preparing','ready','takeover','submitting','submitted','submission_unknown'):
                 raise ValueError('Close this review before changing its resume.')
             conn.execute('INSERT INTO application_resume VALUES (?,?) ON CONFLICT(application_id) DO UPDATE SET resume_id=excluded.resume_id',(row['id'],resume_id))
         existing = conn.execute('SELECT status FROM application_runs WHERE id=?',(row['id'],)).fetchone()
@@ -115,7 +115,7 @@ def command(path, app_id, kind, payload):
             if row['status'] not in ('error', 'expired', 'unsupported', 'needs_attention', 'cancelled'):
                 raise ValueError('This application cannot be restarted in its current state.')
         elif kind == 'cancel':
-            if row['status'] not in ('ready', 'preparing'):
+            if row['status'] not in ('ready', 'preparing', 'takeover'):
                 raise ValueError('This application cannot be closed in its current state.')
         elif row['status'] != 'ready' or row['revision'] != payload.get('revision'):
             raise ValueError('The application changed. Reload it and review the current version.')
@@ -139,5 +139,5 @@ def complete_command(path, command_id):
 def recover(path):
     # Never replay a submit after a process crash; its remote outcome may be unknown.
     with connect(path) as conn:
-        conn.execute("UPDATE application_runs SET status=CASE WHEN status='submitting' THEN 'submission_unknown' ELSE 'expired' END, message='Browser session ended. Review the outcome before continuing.', revision=revision+1 WHERE status IN ('preparing','ready','submitting')")
+        conn.execute("UPDATE application_runs SET status=CASE WHEN status='submitting' THEN 'submission_unknown' ELSE 'expired' END, message='Browser session ended. Review the outcome before continuing.', revision=revision+1 WHERE status IN ('preparing','ready','takeover','submitting')")
         conn.execute('UPDATE browser_commands SET done=1 WHERE done=0')

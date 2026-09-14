@@ -17,6 +17,7 @@ SCAN = r'''() => {
     if (!el.dataset.applyAgentId) el.dataset.applyAgentId = 'f' + (++window.__applyAgentId);
     let label = [...(el.labels || [])].map(l => l.innerText).join(' ').trim();
     if (!label) label = el.getAttribute('aria-label') || el.name || el.id || 'Unlabelled field';
+    const credential = el.type === 'password' || /password|passcode|one.?time|verification.?code|security.?code|auth.?token|otp/i.test(label+' '+el.name+' '+el.id+' '+el.autocomplete);
     const custom = el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') === 'list';
     const select = el.closest('.select');
     const knownCombo = custom && select && !select.querySelector('.select__multi-value');
@@ -24,12 +25,12 @@ SCAN = r'''() => {
     if (el.type === 'file' && el.id === 'resume') label = 'Resume';
     return {id:el.dataset.applyAgentId, label:label.slice(0,600), name:el.name || el.id,
       type, required:el.required || el.getAttribute('aria-required') === 'true' || label.includes('*'),
-      value: type === 'combobox' ? (select.querySelector('.select__single-value')?.textContent || '') :
+      credential, value: credential ? '' : type === 'combobox' ? (select.querySelector('.select__single-value')?.textContent || '') :
         type === 'file' ? [...el.files].map(f=>f.name).join(', ') :
         ['checkbox','radio'].includes(type) ? el.checked : el.value,
       options:el.tagName === 'SELECT' ? [...el.options].map(o=>({value:o.value,label:o.text})) : [],
       valid: el.validity.valid, validation_message: el.validationMessage || '',
-      supported: (!custom || knownCombo) && !['password','file'].includes(type)};
+      supported: !credential && (!custom || knownCombo) && !['password','file'].includes(type)};
   });
 }'''
 

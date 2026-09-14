@@ -13,7 +13,7 @@ class UnsupportedForm(ValueError):
 def valid_entry_url(url):
     try:
         parsed = urlparse(url)
-        return parsed.scheme == 'https' and bool(parsed.hostname) and not parsed.username and parsed.port in (None, 443)
+        return parsed.scheme == 'https' and bool(parsed.hostname) and parsed.username is None and parsed.port in (None, 443)
     except ValueError:
         return False
 
@@ -21,7 +21,7 @@ def valid_entry_url(url):
 # Require application evidence, not a newsletter/login/contact form. Mark exactly
 # one candidate root so the common adapter cannot fill unrelated page inputs.
 DETECT_STANDARD_FORM = r'''() => {
-  const candidates = [...document.querySelectorAll('form')].filter(form => {
+  const candidates = [...document.querySelectorAll('form,[role=form]')].filter(form => {
     if (!form.getClientRects().length || form.querySelector('input[type=password]')) return false;
     const inputs = [...form.querySelectorAll('input')];
     const email = inputs.some(i => i.type === 'email' || /email/i.test(i.name + i.id));

@@ -109,3 +109,39 @@ to file metadata. `GET /resumes/{id}/profile-suggestions` extracts from a saved 
 current employer/title labels when found. No demographic or eligibility fields are
 extracted. The UI fills empty fields and requires Save profile; these endpoints do
 not overwrite a saved profile.
+
+
+## Browser takeover and optional AI field mapping
+
+`POST /applications/{id}/browser` accepts a `BrowserControl` object. Unlike normal
+browser commands, these actions use a bounded in-memory queue (no SQLite payload),
+and return when completed. This endpoint requires the integrated worker runtime.
+
+- `operation: "start"` pauses automatic handling and returns a viewport.
+- `refresh` returns a new viewport/token without input actions.
+- `click`, `mark_final`, `upload_resume` accept viewport pixel `x,y` and the latest
+  `token`. A changed page or stale token rejects the action.
+- `type` accepts `text`; it fills the currently focused editable field. Do not log
+  request bodies. It does not interpret text as keyboard shortcuts or commands.
+- `key` accepts only Tab/Escape/Backspace/arrow keys. Enter is intentionally absent.
+- `scroll` accepts a bounded `delta`; `tab` selects a returned tab index.
+- `save_session` explicitly saves encrypted storage state for the application origin.
+- `resume` returns control to preparation/review; `ai` requests constrained mapping
+  from saved facts on the current application page before resuming review.
+
+Viewport responses contain JPEG `image` as base64, `token`, sanitized `url`, dimensions,
+and available `tabs`. No login screenshot is stored on disk. Resuming returns
+`{resumed:true,message}`; read the updated application snapshot afterward. A timeout
+requires refresh before issuing another action; queued cancelled inputs are discarded.
+A started action may have completed, so never blindly retry it.
+
+`GET /browser-sessions` returns only origin and save/expiry timestamps.
+`POST /browser-sessions/forget` accepts `{origin:"https://careers.example.com"}`.
+It removes the local encrypted state, not live contexts or employer-side sessions.
+
+AI settings additionally accept `browser_assistance` (default false). With `enabled`
+and this flag true, preparation may map unfamiliar fields to exact allowed profile
+sources once per page. No password, identity, or work-authorization sources are sent.
+Provider responses cannot supply executable actions or arbitrary values. Field labels
+are rechecked before applying the plan; populated fields are marked for user review.
+Final submission still uses the existing revision/fingerprint confirmation endpoint.

@@ -1,0 +1,214 @@
+"""Synthetic browser takeover tests. No real identity provider or employer calls."""
+import json
+import os
+from threading import Event
+import pytest
+from src.applications.worker import BrowserWorker
+from src.applications.generic import GenericSession
+from src.applications import store, takeover
+from src.applications.session_vault import SessionVault
+from src.db import database as db
+from src.setup import store as settings
+from src.telegram import store as telegram
+from src.jobs.models import Job
+
+
+@pytest.fixture
+def workspace(tmp_path):
+    path=tmp_path/'jobs.sqlite3'
+    db.initialize_database(path);settings.initialize(path);telegram.initialize(path);store.initialize(path)
+    db.save_profile({'first_name':'Jo','last_name':'Lee','email':'jo@example.com'},path)
+    db.save_jobs([Job('Acme','Engineer','Remote','https://careers.example.com/apply','manual')],path)
+    app_id=store.queue_job(path,1)
+    return path,app_id
+
+
+def test_vault_encrypts_scopes_expires_and_forgets(workspace,monkeypatch):
+    path,_=workspace;vault=SessionVault(path)
+    state={'cookies':[{'name':'auth','value':'SECRETCOOKIE','domain':'careers.example.com'}],'origins':[]}
+    vault.save('https://careers.example.com/apply',state)
+    assert b'SECRETCOOKIE' not in vault.target('https://careers.example.com').read_bytes()
+    assert vault.load('https://careers.example.com/another')==state
+    assert vault.load('https://different.example.com') is None
+    assert vault.target('https://careers.example.com').stat().st_mode & 0o777==0o600
+    assert vault.list()[0]['origin']=='https://careers.example.com'
+    from src.applications import session_vault
+    now=session_vault.time.time();monkeypatch.setattr(session_vault.time,'time',lambda:now+8*86400)
+    assert vault.load('https://careers.example.com') is None
+    vault.forget('https://careers.example.com')
+    assert vault.list()==[]
+
+
+def test_remote_credentials_do_not_enter_database(workspace):
+    path,app_id=workspace;worker=BrowserWorker(path,Event())
+    secret={'operation':'type','text':'PASSWORD-MUST-STAY-IN-MEMORY'}
+    future=worker.request_control(app_id,secret)
+    worker.control=lambda app,payload: {'ok':True}
+    assert worker.service_control()
+    assert future.result()=={'ok':True}
+    assert secret=={}
+    assert b'PASSWORD-MUST-STAY-IN-MEMORY' not in path.read_bytes()
+    pending={'operation':'type','text':'cancelled secret'}
+    future=worker.request_control(app_id,pending);future.cancel()
+    worker.control=lambda *args:pytest.fail('Cancelled action replayed')
+    worker.service_control();assert pending=={}
+
+
+@pytest.fixture
+def browser_page():
+    if os.environ.get('RUN_BROWSER_TESTS')!='1':pytest.skip('Enable synthetic Chromium tests')
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        browser=p.chromium.launch(channel=os.environ.get('BROWSER_CHANNEL') or None)
+        context=browser.new_context(viewport={'width':1100,'height':850})
+        context.route('**/*',lambda r:r.fulfill(status=200,content_type='text/html',body='<body></body>'))
+        page=context.new_page();page.goto('https://careers.example.com/apply')
+        yield page
+        browser.close()
+
+
+def worker_for(path,app_id,page):
+    worker=BrowserWorker(path,Event());session=GenericSession(page)
+    worker.sessions[app_id]={'context':page.context,'session':session,'entry_url':page.url,'adapter':'generic','expires':__import__('time').time()+7200}
+    store.set_run(path,app_id,'ready',{'fields':[]})
+    return worker,session
+
+
+def center(page,selector):
+    box=page.locator(selector).bounding_box()
+    return {'x':box['x']+box['width']/2,'y':box['y']+box['height']/2}
+
+
+def test_login_takeover_same_context_save_and_resume(browser_page,workspace):
+    page=browser_page;path,app_id=workspace
+    page.set_content('''<label>Email<input id=email></label><label>Password<input id=password type=password></label>
+<button id=login onclick="document.body.innerHTML='<form id=application><label>First name<input name=first_name></label><label>Last name<input name=last_name></label><label>Email<input type=email></label><button type=button>Submit application</button></form>'">Sign in</button>''')
+    worker,session=worker_for(path,app_id,page)
+    view=worker.control(app_id,{'operation':'start'})
+    view=worker.control(app_id,{'operation':'click','token':view['token'],**center(page,'#password')})
+    view=worker.control(app_id,{'operation':'type','token':view['token'],'text':'transient-password'})
+    assert page.locator('#password').input_value()=='transient-password'
+    assert b'transient-password' not in path.read_bytes()
+    assert not (path.parent/'applications'/str(app_id)/'review.png').exists()
+    with pytest.raises(ValueError,match='signing in'):
+        worker.control(app_id,{'operation':'save_session','token':view['token']})
+    view=worker.control(app_id,{'operation':'click','token':view['token'],**center(page,'#login')})
+    page.context.add_cookies([{'name':'auth','value':'cookie-value','url':'https://careers.example.com'}])
+    view=worker.control(app_id,{'operation':'save_session','token':view['token']})
+    assert worker.vault.load(page.url)['cookies'][0]['value']=='cookie-value'
+    result=worker.control(app_id,{'operation':'resume','token':view['token']})
+    assert result['resumed']
+    assert worker.sessions[app_id]['context'] is page.context
+    assert page.locator('[name=first_name]').input_value()=='Jo'
+    assert store.get(path,app_id)['status']=='ready'
+
+
+def test_stale_click_and_final_submission_are_blocked(browser_page,workspace):
+    page=browser_page;path,app_id=workspace
+    page.set_content('<form><label>Full name<input value="Jo Lee"></label><button type=button id=finish onclick="window.submitted=true">Submit application</button></form>')
+    worker,session=worker_for(path,app_id,page)
+    view=worker.control(app_id,{'operation':'start'})
+    with pytest.raises(ValueError,match='Final submission'):
+        worker.control(app_id,{'operation':'click','token':view['token'],**center(page,'#finish')})
+    page.locator('#finish').evaluate("e=>e.style.marginTop='100px'")
+    with pytest.raises(ValueError,match='page changed'):
+        worker.control(app_id,{'operation':'click','token':view['token'],**center(page,'#finish')})
+    view=worker.control(app_id,{'operation':'refresh'})
+    view=worker.control(app_id,{'operation':'mark_final','token':view['token'],**center(page,'#finish')})
+    assert not page.evaluate('Boolean(window.submitted)')
+    result=worker.control(app_id,{'operation':'resume','token':view['token']})
+    assert result['resumed'] and store.get(path,app_id)['snapshot']['can_submit']
+    assert not page.evaluate('Boolean(window.submitted)')
+
+
+def test_popup_tab_is_available_in_same_context(browser_page,workspace):
+    page=browser_page;path,app_id=workspace;worker,_=worker_for(path,app_id,page)
+    view=worker.control(app_id,{'operation':'start'})
+    popup=page.context.new_page();popup.goto('https://careers.example.com/login')
+    view=worker.control(app_id,{'operation':'refresh'})
+    assert len(view['tabs'])==2
+    view=worker.control(app_id,{'operation':'tab','token':view['token'],'tab':1})
+    assert worker.sessions[app_id]['session'].page is popup
+
+
+def test_unknown_page_is_kept_for_takeover(browser_page,workspace,monkeypatch):
+    page=browser_page;path,app_id=workspace;worker=BrowserWorker(path,Event())
+    # Use the synthetic context instead of real external traffic.
+    class Context:
+        def __getattr__(self,name):return getattr(page.context,name)
+        def route(self,pattern,handler):page.context.route(pattern,lambda r:r.fulfill(status=200,content_type='text/html',body='<h1>Custom application</h1>'))
+    class Browser:
+        def new_context(self,**kwargs):return Context()
+    worker.browser=Browser()
+    monkeypatch.setattr('src.applications.worker.public_request',lambda _:True)
+    from src.applications.discovery import UnsupportedForm
+    monkeypatch.setattr('src.applications.worker.discover',lambda *args,**kwargs:(_ for _ in ()).throw(UnsupportedForm('custom page')))
+    worker.prepare(app_id)
+    assert store.get(path,app_id)['status']=='takeover'
+    assert app_id in worker.sessions
+
+
+def test_saved_state_restores_in_new_context_and_mfa_is_redacted(browser_page,workspace):
+    page=browser_page;path,_=workspace;vault=SessionVault(path)
+    page.context.add_cookies([{'name':'auth','value':'restore-me','url':'https://careers.example.com'}])
+    page.evaluate("localStorage.setItem('signed-in','yes')")
+    vault.save(page.url,page.context.storage_state(indexed_db=True))
+    fresh=page.context.browser.new_context(storage_state=vault.load(page.url))
+    try:
+        assert fresh.cookies('https://careers.example.com')[0]['value']=='restore-me'
+        assert fresh.cookies('https://another.example.com')==[]
+    finally:fresh.close()
+    page.set_content('<label>Verification code<input name=otp value=123456></label>')
+    snapshot=GenericSession(page).snapshot()
+    assert snapshot['fields'][0]['value']==''
+    assert not snapshot['fields'][0]['supported']
+    assert '123456' not in json.dumps(snapshot)
+
+
+def test_marked_final_button_change_requires_new_review(browser_page):
+    page=browser_page
+    page.set_content('<label>Name<input value=Jo></label><button id=final type=button>Send application</button>')
+    session=GenericSession(page)
+    takeover.click_target(session,**center(page,'#final'),mark_final=True)
+    assert session.snapshot()['can_submit']
+    page.locator('#final').evaluate("e=>e.textContent='Delete account'")
+    assert not session.snapshot()['can_submit']
+
+
+def test_empty_username_credentials_are_rejected():
+    from src.applications.discovery import valid_entry_url
+    from src.applications.session_vault import origin
+    assert not valid_entry_url('https://:secret@example.com/apply')
+    with pytest.raises(ValueError):origin('https://:secret@example.com/apply')
+
+
+def test_mfa_capture_is_never_written_to_disk(browser_page,workspace):
+    page=browser_page;path,app_id=workspace
+    page.set_content('<label>Verification code<input name=code value=123456></label>')
+    worker,session=worker_for(path,app_id,page)
+    with pytest.raises(takeover.NeedsTakeover):worker.capture(app_id,session)
+    assert not (path.parent/'applications'/str(app_id)/'review.png').exists()
+
+
+def test_apply_link_uses_navigation_and_dropdown_button_is_allowed(browser_page):
+    page=browser_page
+    page.set_content('''<button aria-haspopup="listbox" onclick="this.dataset.open='yes'">Select an option</button>
+<a href="https://careers.example.com/form" onclick="window.unsafeClick=true;return false">Apply now</a>''')
+    session=GenericSession(page)
+    takeover.click_target(session,**center(page,'button'))
+    assert page.locator('button').get_attribute('data-open')=='yes'
+    takeover.click_target(session,**center(page,'a'))
+    assert page.url=='https://careers.example.com/form'
+    assert page.evaluate('window.unsafeClick') is None
+
+
+def test_explicit_selected_resume_upload_through_file_chooser(browser_page,workspace,tmp_path):
+    page=browser_page;path,app_id=workspace
+    page.set_content('''<input id=resume type=file hidden>
+<button type=button onclick="document.querySelector('#resume').click()">Upload resume</button>''')
+    worker,session=worker_for(path,app_id,page)
+    resume=tmp_path/'selected.pdf';resume.write_bytes(b'%PDF-1.4 synthetic resume')
+    worker.sessions[app_id]['resume_path']=resume
+    view=worker.control(app_id,{'operation':'start'})
+    worker.control(app_id,{'operation':'upload_resume','token':view['token'],**center(page,'button')})
+    assert page.locator('#resume').evaluate('e=>e.files[0].name')=='selected.pdf'

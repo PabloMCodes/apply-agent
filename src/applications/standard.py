@@ -23,7 +23,7 @@ class StandardFormSession(GreenhouseSession):
     def refresh_root(self):
         # After leaving a verified application, follow only a unique visible form.
         self.page.evaluate("""() => {
-            const forms=[...document.querySelectorAll('form')].filter(f=>f.getClientRects().length && !f.querySelector('input[type=password]'));
+            const forms=[...document.querySelectorAll('form,[role=form]')].filter(f=>f.getClientRects().length && !f.querySelector('input[type=password]'));
             document.querySelectorAll('[data-apply-agent-form]').forEach(f=>f.removeAttribute('data-apply-agent-form'));
             if(forms.length===1)forms[0].setAttribute('data-apply-agent-form','');
         }""")

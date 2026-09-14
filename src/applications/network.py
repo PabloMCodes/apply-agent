@@ -18,7 +18,7 @@ def public_host(host):
 def public_request(url):
     try:
         parsed = urlparse(url)
-        return (parsed.scheme == 'https' and parsed.port in (None, 443) and not parsed.username
+        return (parsed.scheme == 'https' and parsed.port in (None, 443) and parsed.username is None
                 and bool(parsed.hostname) and public_host(parsed.hostname))
     except ValueError:
         return False

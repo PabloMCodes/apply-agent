@@ -6,3 +6,5 @@ pydantic>=2.9,<3.0
 pypdf>=5,<7
 python-multipart>=0.0.18,<1
 playwright>=1.51,<2
+
+cryptography>=44,<51

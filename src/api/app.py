@@ -35,10 +35,12 @@ def create_app(db_path: Path = db.DATABASE_PATH, start_workers: bool = False) ->
         application_store.initialize(db_path)
         db_path.chmod(0o600)
         runtime = None
+        app.state.runtime = None
         if start_workers:
             from src.runtime import Runtime
             runtime = Runtime(db_path)
             runtime.start()
+            app.state.runtime = runtime
         try:
             yield
         finally:

@@ -42,12 +42,13 @@ class Runtime:
         self.stop = Event()
         self.threads = []
         self.lock = None
+        self.browser = BrowserWorker(self.path, self.stop)
 
     def start(self):
         self.lock = worker_lock(self.path)
         self.lock.__enter__()
         for name, target in [('sources', self.monitor), ('telegram', self.telegram),
-                             ('browser', BrowserWorker(self.path, self.stop).run)]:
+                             ('browser', self.browser.run)]:
             thread = Thread(target=target, name='apply-agent-' + name, daemon=True)
             thread.start()
             self.threads.append(thread)
