@@ -164,3 +164,13 @@ The application UI opens `/#applications/{id}` directly in the live browser.
 `#applications/{id}/answers` shows the recorded answer review. Browser operation
 `review` captures the current takeover page and returns it to ready status without
 autofill, navigation, or submission; login must be completed first.
+
+`GET /browser/status` reports `{mode: "native" | "stream", running: bool}`.
+Native browser operations use the existing `/applications/{id}/browser` endpoint:
+- `focus` pauses this application for manual work and brings its existing visible
+  browser window forward. It refuses streamed sessions and never reopens the URL.
+- `native_submitted` records the user's report of submission and closes that session.
+  It does not click employer controls or claim independent confirmation.
+
+The desktop preview only launches/focuses the prepared window. Native input is
+handled by Chromium directly; streamed keyboard/mouse commands are not used.

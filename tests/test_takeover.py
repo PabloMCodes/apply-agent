@@ -327,3 +327,66 @@ def test_return_to_review_captures_manual_edits_without_filling_or_advancing(bro
     assert record['status']=='ready'
     assert page.locator('#last').input_value()==''
     assert any(f['value']=='Manual edit' for f in record['snapshot']['fields'])
+
+
+def test_native_focus_reuses_page_and_manual_completion_does_not_click_submit(browser_page,workspace,monkeypatch):
+    from src.applications import native
+    page=browser_page;path,app_id=workspace
+    page.set_content('<label>First name<input value=Jo></label><button type=button onclick="window.submitted=true">Submit application</button>')
+    worker,_=worker_for(path,app_id,page);worker.browser_mode='native'
+    focused=[];monkeypatch.setattr(native,'focus',lambda p:focused.append(p) or True)
+    result=worker.control(app_id,{'operation':'focus'})
+    assert result['native'] and focused==[page]
+    assert len(page.context.pages)==1 and page.locator('input').input_value()=='Jo'
+    assert not page.evaluate('Boolean(window.submitted)')
+    assert store.get(path,app_id)['status']=='takeover'
+    result=worker.control(app_id,{'operation':'native_submitted'})
+    assert result['submitted'] and app_id not in worker.sessions
+    assert store.get(path,app_id)['job_status']=='applied'
+    assert 'Marked submitted by you' in store.get(path,app_id)['message']
+
+
+def test_stream_mode_rejects_native_focus(browser_page,workspace):
+    path,app_id=workspace;worker,_=worker_for(path,app_id,browser_page)
+    worker.browser_mode='stream'
+    with pytest.raises(ValueError,match='streamed mode'):
+        worker.control(app_id,{'operation':'focus'})
+
+
+@pytest.mark.skipif(os.environ.get('RUN_NATIVE_BROWSER_TESTS')!='1',reason='Explicit desktop browser test')
+def test_real_desktop_browser_focus_preserves_prepared_form(workspace,monkeypatch):
+    path,app_id=workspace;monkeypatch.setenv('BROWSER_MODE','native')
+    worker=BrowserWorker(path,Event());worker.start_browser()
+    try:
+        context=worker.browser.new_context(viewport={'width':1100,'height':850})
+        context.route('**/*',lambda r:r.fulfill(status=200,content_type='text/html',body='<label>First name<input name=first_name></label><button type=button>Submit application</button>'))
+        page=context.new_page();page.goto('https://careers.example.com/apply')
+        session=GenericSession(page);session.autofill({'first_name':'Jo'})
+        page.evaluate("localStorage.setItem('session-marker','same-browser')")
+        worker.sessions[app_id]={'context':context,'session':session,'entry_url':page.url,'adapter':'generic','expires':__import__('time').time()+7200}
+        store.set_run(path,app_id,'ready',{})
+        result=worker.control(app_id,{'operation':'focus'})
+        assert result['native'] and result['message']=='Your prepared browser window is open.'
+        assert worker.sessions[app_id]['session'].page is page
+        assert page.locator('input').input_value()=='Jo'
+        assert page.evaluate("localStorage.getItem('session-marker')")=='same-browser'
+        assert len(context.pages)==1
+    finally:
+        worker.close(app_id);worker.browser.close();worker.playwright.stop()
+
+
+def test_closed_desktop_window_keeps_review_history_and_does_not_mark_applied(workspace,monkeypatch):
+    from types import SimpleNamespace
+    path,app_id=workspace;worker=BrowserWorker(path,Event())
+    snapshot={'fields':[{'label':'First name','value':'Jo'}],'pages':[]}
+    store.set_run(path,app_id,'ready',snapshot)
+    worker.sessions[app_id]={'context':SimpleNamespace(pages=[],close=lambda:None),'expires':__import__('time').time()+7200}
+    monkeypatch.setattr(store,'recover',lambda path:None)
+    def stop_after_cleanup():worker.stop.set();return True
+    worker.service_control=stop_after_cleanup
+    worker.run()
+    record=store.get(path,app_id)
+    assert record['status']=='needs_attention'
+    assert record['snapshot']==snapshot
+    assert record['job_status']!='applied'
+    assert worker.sessions=={}

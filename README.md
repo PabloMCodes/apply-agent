@@ -38,6 +38,27 @@ On Linux, install the browser's OS dependencies with
 If you already have Google Chrome installed, `BROWSER_CHANNEL=chrome python main.py`
 is also supported with a fresh isolated browser profile.
 
+### Local browser windows
+
+`python main.py` now defaults to **native** mode on a Mac or Linux desktop.
+The worker prepares each application in a visible, isolated Chromium window.
+Open an application or click its preview to bring that exact window forward;
+fields, cookies, uploads, and the current page stay intact. Type and scroll in
+Chromium directly, without the screenshot/input relay. Let preparation finish or
+pause before editing the window so your input does not race the worker.
+
+Finish reviewing before submitting in the employer page. Then choose **I submitted
+this application** in Apply Agent to update tracking and close the window. This
+records your report; it does not click Submit or verify employer acceptance.
+**Review in Apply Agent** captures your current answers without refilling or advancing.
+Keep the window open until you record completion. Closing it alone never means submitted.
+
+For remote servers or phone access, use `BROWSER_MODE=stream python main.py`.
+Docker and `uvicorn main:app` default to streamed mode; a native window opens on
+the host computer, not the phone. `BROWSER_MODE=native` explicitly enables desktop
+mode when launching through another entry point. Switching modes requires a restart
+and fresh preparation: an existing headless session cannot become a desktop window.
+
 ## Set up your workspace
 
 1. **Profile & resume:** upload titled PDF or UTF-8 text resumes (up to 5 MB each). Review the
@@ -227,7 +248,7 @@ draft is accurate: inspect the shown evidence, copy/edit the draft, and confirm 
 Identity, authorization, and consent questions are excluded from AI drafting.
 
 
-### Live browser takeover and saved logins
+### Streamed browser takeover and saved logins
 
 Unfamiliar or login pages remain open with status `takeover`. Open the application
 from **Applications** to go straight into the worker’s actual browser session:
@@ -282,3 +303,5 @@ Implementation references: [Playwright authentication](https://playwright.dev/py
 [Fernet](https://cryptography.io/en/latest/fernet/).
 
 Live viewport implementation reference: [Playwright CDP sessions](https://playwright.dev/python/docs/api/class-cdpsession).
+
+Native browser reference: [Playwright visible browser launch](https://playwright.dev/python/docs/library).

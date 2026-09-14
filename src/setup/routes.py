@@ -276,6 +276,11 @@ def router(path):
         answers.forget(path, answer_id)
         return Response(status_code=204)
 
+    @routes.get('/browser/status')
+    def browser_status(request: Request):
+        runtime=getattr(request.app.state,'runtime',None)
+        return {'mode':runtime.browser.browser_mode if runtime else 'stream','running':runtime is not None}
+
     @routes.post('/applications/{app_id}/browser')
     async def browser_control(app_id: int, body: BrowserControl, request: Request):
         runtime = getattr(request.app.state, 'runtime', None)

@@ -10,7 +10,7 @@ from pathlib import Path
 import shutil
 import time
 
-from src.applications import store, answers, questions
+from src.applications import store, answers, questions, native
 from src.applications.greenhouse import GreenhouseSession
 from src.applications.generic import GenericSession
 from src.applications.session_vault import SessionVault
@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 class BrowserWorker:
     def __init__(self, path, stop):
         self.path, self.stop = path, stop
+        self.browser_mode = native.mode()
         self.sessions = {}
         self.browser = None
         self.playwright = None
@@ -43,8 +44,8 @@ class BrowserWorker:
             local_browsers = Path(__file__).resolve().parents[2] / '.playwright'
             if local_browsers.exists():
                 os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', str(local_browsers))
-            self.playwright = sync_playwright().start()
-            self.browser = self.playwright.chromium.launch(headless=True, channel=os.environ.get('BROWSER_CHANNEL') or None)
+            if self.playwright is None:self.playwright = sync_playwright().start()
+            self.browser = self.playwright.chromium.launch(headless=self.browser_mode!='native', channel=os.environ.get('BROWSER_CHANNEL') or None)
 
     def capture(self, app_id, session):
         if takeover.login_page(session.page):
@@ -229,6 +230,16 @@ class BrowserWorker:
             page=pages[-1];session=entry.get('tab_sessions',{}).get(page) or GenericSession(page)
             entry['session']=session;entry['adapter']='generic' if isinstance(session,GenericSession) else entry['adapter']
         self.live_view.attach(app_id,page)
+        if operation=='focus':
+            if self.browser_mode!='native':raise ValueError('This session runs in streamed mode. Restart with BROWSER_MODE=native and prepare it again for a desktop window.')
+            self.pause_for_takeover(app_id,'Open in your desktop browser. Finish and review the application there.')
+            focused=native.focus(page)
+            return dict(takeover.image_frame(entry),native=True,message='Your prepared browser window is open.' if focused else 'Select the Chromium window in your Dock to continue.')
+        if operation=='native_submitted':
+            if self.browser_mode!='native':raise ValueError('Manual browser completion is available in native mode only.')
+            store.set_run(self.path,app_id,'submitted',record['snapshot'],'Marked submitted by you in the desktop browser.')
+            self.close(app_id)
+            return {'submitted':True,'message':'Application marked submitted.'}
         if operation=='start':
             if record['status']=='ready':self.pause_for_takeover(app_id,'You control the browser. Resume preparation when finished.')
             return takeover.image_frame(entry)
@@ -402,10 +413,16 @@ class BrowserWorker:
             while not self.stop.is_set():
                 try:
                     for app_id, value in list(self.sessions.items()):
+                        if not any(not p.is_closed() for p in value['context'].pages):
+                            previous=store.get(self.path,app_id)
+                            self.close(app_id)
+                            store.set_run(self.path,app_id,'needs_attention',snapshot=previous['snapshot'],message='Browser window closed. Check whether you submitted before preparing again.')
+                            continue
                         if time.time() > value['expires']:
                             record = store.get(self.path, app_id)
                             self.close(app_id)
                             store.set_run(self.path, app_id, 'expired', record['snapshot'], 'Review session expired after two hours. Prepare it again to continue.', notify=True)
+                    if self.browser is not None and hasattr(self.browser,'is_connected') and not self.browser.is_connected():self.browser=None
                     if self.service_control():
                         continue
                     command = store.next_command(self.path)
@@ -426,9 +443,12 @@ class BrowserWorker:
                             self.prepare(app_id)
                 except Exception as exc:
                     logger.warning('Browser worker will retry after %s.', type(exc).__name__)
-                pages=[e['session'].page for e in self.sessions.values() if not e['session'].page.is_closed()]
-                if pages:pages[0].wait_for_timeout(30)  # Pump live frames and input promptly.
-                else:self.stop.wait(.1)
+                try:
+                    pages=[e['session'].page for e in self.sessions.values() if not e['session'].page.is_closed()]
+                    if pages:pages[0].wait_for_timeout(30)  # Pump live frames and input promptly.
+                    else:self.stop.wait(.1)
+                except Exception:
+                    self.stop.wait(.1)  # A desktop window can close between the check and poll.
         finally:
             while not self.controls.empty():
                 _,payload,future=self.controls.get_nowait()

@@ -96,7 +96,7 @@ class AISettings(InputModel):
 
 
 class BrowserControl(InputModel):
-    operation: Literal['start','refresh','click','type','insert','scroll','key','tab','save_session','resume','review','ai','mark_final','upload_resume']
+    operation: Literal['start','focus','native_submitted','refresh','click','type','insert','scroll','key','tab','save_session','resume','review','ai','mark_final','upload_resume']
     token: str = Field(default='',max_length=100)
     x: float = Field(default=0,ge=0,le=1100)
     y: float = Field(default=0,ge=0,le=850)

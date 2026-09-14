@@ -156,3 +156,12 @@ browser contexts active until closed.
 Upgrade native installations with `python -m pip install -r requirements.txt` to
 install the cryptography dependency. Docker builds install it automatically. Finish
 live reviews before restarting; takeover sessions also expire on restart.
+
+## Desktop versus server browsers
+
+`python main.py` chooses visible Chromium windows on a local desktop. Docker and
+ASGI server entry points default to `BROWSER_MODE=stream` for headless operation.
+Set `BROWSER_MODE=stream` explicitly for remote/phone access. Native mode requires
+a graphical desktop and focuses a window on that host, never on a remote client.
+Changing modes requires restarting and preparing applications again. Desktop
+windows remain owned by the worker; closing the app or restarting ends them.

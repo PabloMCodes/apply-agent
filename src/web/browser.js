@@ -1,6 +1,8 @@
 'use strict';
 // Inputs run in order. Background refresh never overlaps an input request.
 async function browserPanel(id,onResume,watching=false) {
+  const browser=await api('/browser/status');
+  if(browser.mode==='native')return nativeBrowserPanel(id,onResume,watching);
   let current=null,busy=false,pending=0,chain=Promise.resolve(),generation=0,attached=false,attachAttempts=0,autoControl=watching;
   const image=el('img',{alt:'Interactive server browser',class:'live-browser',tabindex:0,draggable:false});
   const url=el('p',{class:'source-url'}),message=el('div'),tabs=el('select',{'aria-label':'Browser tab'});
@@ -105,5 +107,55 @@ async function browserPanel(id,onResume,watching=false) {
     setTimeout(tick,watching?150:250);
   }
   setTimeout(tick,150);
+  return panel;
+}
+
+
+// The desktop window owns keyboard/mouse input. This image is only a launcher.
+async function nativeBrowserPanel(id,onReview,preparing){
+  let current=null,busy=false,attached=false,attempts=0,ended=false;
+  const image=el('img',{alt:'Open prepared application in desktop browser',class:'live-browser native-preview',tabindex:0,role:'button'});
+  const message=el('div'),tabs=el('select',{'aria-label':'Prepared browser tab'});
+  const open=button('Open prepared browser',()=>action('focus'));
+  const panel=card('Your application browser','Use the real Chromium window on the computer running Apply Agent to type, scroll, upload files, and review your application. Click the preview to return to that same window.',message,open,tabs,image);
+  panel.classList.add('live-panel');tabs.hidden=true;
+  async function action(operation,extra={}){
+    if(busy)return;
+    busy=true;
+    try{
+      const result=await send(`/applications/${id}/browser`,'POST',{operation,token:current?.token||'',...extra});
+      if(result.submitted){ended=true;toast(result.message);location.hash='applications';return;}
+      if(result.resumed&&operation==='review'){ended=true;onReview();return;}
+      if(result.token)current=result;
+      if(result.image)image.src='data:image/jpeg;base64,'+result.image;
+      if(result.tabs){tabs.replaceChildren(...result.tabs.map(t=>el('option',{value:String(t.index)},`${t.index+1}: ${t.url}`)));tabs.hidden=result.tabs.length<2;}
+      if(result.message)message.replaceChildren(notice(result.message));
+    }catch(error){message.replaceChildren(notice(error.message,'error'));}
+    finally{busy=false;}
+  }
+  image.addEventListener('click',()=>action('focus'));
+  image.addEventListener('keydown',event=>{if(['Enter',' '].includes(event.key)){event.preventDefault();action('focus');}});
+  tabs.addEventListener('change',async()=>{await action('tab',{tab:Number(tabs.value)});await action('focus');});
+  panel.append(el('div',{class:'actions'},
+    button('Review in Apply Agent',()=>action('review'),'secondary'),
+    button('Resume filling',()=>action('resume'),'secondary'),
+    button('Remember site login',()=>action('save_session'),'secondary'),
+    button('I submitted this application',()=>action('native_submitted'),'secondary')),
+    notice('Submit only after reviewing the employer form. After submitting there, click “I submitted this application” to update tracking and close its browser window. Closing a window alone does not mark it submitted.'));
+  open.disabled=preparing;
+  if(!preparing)await action('focus');
+  async function tick(){
+    if(ended)return;
+    if(panel.isConnected)attached=true;else if(attached||attempts++>15)return;
+    if(!document.hidden&&!busy){
+      try{
+        const result=await api(`/applications/${id}/browser/frame`,{cache:'no-store'});
+        if(result.image)image.src='data:image/jpeg;base64,'+result.image;
+        open.disabled=result.status==='preparing';
+      }catch(error){message.replaceChildren(notice(error.message));}
+    }
+    setTimeout(tick,1000);
+  }
+  setTimeout(tick,300);
   return panel;
 }
