@@ -11,7 +11,7 @@ from src.applications.worker import BrowserWorker
 
 pytestmark=pytest.mark.skipif(os.environ.get('RUN_BROWSER_TESTS')!='1',reason='Enable synthetic Chromium tests')
 
-LOGIN='''<html><body><label>Password<input id="password" type="password" style="position:absolute;left:100px;top:20px;width:200px;height:30px"></label><button id="login" style="position:absolute;left:320px;top:20px;width:100px;height:30px" onclick="localStorage.setItem('auth','synthetic-token');document.body.innerHTML='<form id=application><label>First name<input name=first_name></label><label>Last name<input name=last_name></label><label>Email<input type=email></label><button type=button>Submit application</button></form>'">Sign in</button></body></html>'''
+LOGIN='''<html><body><label>Password<input id="password" type="password" style="position:absolute;left:100px;top:20px;width:200px;height:30px"></label><button id="login" style="position:absolute;left:320px;top:20px;width:100px;height:30px" onclick="if(document.querySelector('#password').value!=='synthetic-password')return;localStorage.setItem('auth','synthetic-token');document.body.innerHTML='<form id=application><label>First name<input name=first_name></label><label>Last name<input name=last_name></label><label>Email<input type=email></label><button type=button>Submit application</button></form>'">Sign in</button></body></html>'''
 
 
 def test_live_browser_login_and_resume_from_ui(tmp_path):
@@ -53,7 +53,9 @@ def test_live_browser_login_and_resume_from_ui(tmp_path):
             page.get_by_role('button',name='Open live browser',exact=True).click()
             image=page.get_by_alt_text('Interactive server browser')
             image.wait_for()
-            page.wait_for_function("document.querySelector('.live-browser').naturalWidth>0")
+            page.wait_for_function("() => document.querySelector('.live-browser').naturalWidth>0")
+            if page.get_by_role('button',name='Take control',exact=True).is_visible():
+                page.get_by_role('button',name='Take control',exact=True).click()
             from pathlib import Path
             screenshots=Path('/tmp/apply-agent-takeover-ui');screenshots.mkdir(exist_ok=True)
             page.screenshot(path=str(screenshots/'desktop.png'),full_page=True)
@@ -63,10 +65,16 @@ def test_live_browser_login_and_resume_from_ui(tmp_path):
             page.screenshot(path=str(screenshots/'phone.png'),full_page=True)
             page.get_by_label('Zoom browser to full size (scroll to reach controls)',exact=True).uncheck()
             page.set_viewport_size({'width':1440,'height':1080})
+            image.hover()
+            with page.expect_request(lambda r:r.url.endswith('/browser') and r.method=='POST' and r.post_data_json.get('operation')=='scroll') as wheel_request:
+                page.mouse.wheel(0,100)
+            assert wheel_request.value.post_data_json['delta']>0
+            page.wait_for_timeout(200)
             # The synthetic password input is near (140, 18) in the server viewport.
             box=image.bounding_box();image.click(position={'x':150*box['width']/1100,'y':35*box['height']/850})
-            page.get_by_label('Text to type in browser',exact=True).fill('synthetic-password')
-            page.get_by_role('button',name='Type into selected field',exact=True).click()
+            assert page.get_by_role('button',name='Scroll down',exact=True).count()==0
+            assert page.get_by_role('button',name='Type into selected field',exact=True).count()==0
+            page.get_by_label('Browser keyboard input',exact=True).press_sequentially('synthetic-password')
             page.wait_for_timeout(500)
             assert b'synthetic-password' not in path.read_bytes()
             # The sign-in button is right of the password input.
@@ -75,6 +83,8 @@ def test_live_browser_login_and_resume_from_ui(tmp_path):
             page.get_by_role('button',name='Remember this site login',exact=True).click()
             page.get_by_text('Session saved for this application site for up to seven days.',exact=True).wait_for()
             page.get_by_role('button',name='Resume worker / review',exact=True).click()
+            page.get_by_text('Preparation paused or ready. Take control or return to review.',exact=True).wait_for()
+            page.get_by_role('button',name='Return to review',exact=True).click()
             page.get_by_role('button',name='Review complete · Submit',exact=True).wait_for()
             response=page.request.get(base+f"/applications/{run['id']}").json()
             assert response['status']=='ready'

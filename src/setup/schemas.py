@@ -96,13 +96,13 @@ class AISettings(InputModel):
 
 
 class BrowserControl(InputModel):
-    operation: Literal['start','refresh','click','type','scroll','key','tab','save_session','resume','ai','mark_final','upload_resume']
+    operation: Literal['start','refresh','click','type','insert','scroll','key','tab','save_session','resume','ai','mark_final','upload_resume']
     token: str = Field(default='',max_length=100)
     x: float = Field(default=0,ge=0,le=1100)
     y: float = Field(default=0,ge=0,le=850)
     text: str = Field(default='',max_length=20000,repr=False)
     delta: int = Field(default=0,ge=-2000,le=2000)
-    key: Literal['Tab','Escape','Backspace','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'] = 'Tab'
+    key: Literal['Tab','Escape','Backspace','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End','Delete','Shift+Tab','ControlOrMeta+A'] = 'Tab'
     tab: int = Field(default=0,ge=0,le=20)
 
 

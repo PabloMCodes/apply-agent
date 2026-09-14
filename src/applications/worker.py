@@ -34,6 +34,8 @@ class BrowserWorker:
         self.controls = Queue(maxsize=32)
         self.in_control = False
         self.vault = SessionVault(path)
+        from src.applications.live_view import LiveView
+        self.live_view = LiveView()
 
     def start_browser(self):
         if self.browser is None:
@@ -93,6 +95,7 @@ class BrowserWorker:
             page.set_default_timeout(5000)
             context.route('**/*', guard)
             self.sessions[app_id] = {'context': context, 'session': GenericSession(page), 'expires': time.time() + 7200, 'entry_url':url,'adapter':'generic'}
+            self.live_view.attach(app_id,page)
             self.freeze_resume(app_id,record)
             page.goto(url, wait_until='load', timeout=30000)
             if takeover.login_page(page):
@@ -225,13 +228,14 @@ class BrowserWorker:
             if not pages:raise ValueError('All browser tabs were closed. Prepare the application again.')
             page=pages[-1];session=entry.get('tab_sessions',{}).get(page) or GenericSession(page)
             entry['session']=session;entry['adapter']='generic' if isinstance(session,GenericSession) else entry['adapter']
+        self.live_view.attach(app_id,page)
         if operation=='start':
             if record['status']=='ready':self.pause_for_takeover(app_id,'You control the browser. Resume preparation when finished.')
             return takeover.image_frame(entry)
         if record['status']!='takeover':raise ValueError('Open browser takeover before operating this page.')
         if operation!='refresh' and payload.get('token')!=entry.get('control_token'):
             raise ValueError('The browser view changed. Refresh before another action.')
-        if operation in ('click','type','key','mark_final','upload_resume') and entry.get('view_signature') != takeover.view_signature(page):
+        if operation in ('click','type','insert','key','mark_final','upload_resume') and entry.get('view_signature') != takeover.view_signature(page):
             raise ValueError('The page changed since the screenshot. Refresh before interacting.')
         message=''
         if operation in ('click','mark_final'):
@@ -250,7 +254,10 @@ class BrowserWorker:
                 raise ValueError('Click the resume file input, its label, or a supported upload button.')
             message='Uploaded the selected resume. Review the employer form.'
         elif operation=='type':takeover.type_text(page,payload['text'])
-        elif operation=='scroll':page.mouse.wheel(0,payload['delta'])
+        elif operation=='insert':takeover.insert_text(page,payload['text'])
+        elif operation=='scroll':
+            page.mouse.move(payload.get('x',550),payload.get('y',425))
+            page.mouse.wheel(0,payload['delta'])
         elif operation=='key':page.keyboard.press(payload['key'])
         elif operation=='tab':
             tabs=entry['context'].pages
@@ -290,10 +297,11 @@ class BrowserWorker:
             store.set_run(self.path,app_id,'ready',self.capture(app_id,session),message)
             return {'resumed':True,'message':message}
         elif operation!='refresh':raise ValueError('Unsupported browser operation.')
-        entry['session'].page.wait_for_timeout(150)
+        self.live_view.attach(app_id,entry['session'].page)
         return dict(takeover.image_frame(entry),message=message)
 
     def close(self, app_id):
+        self.live_view.close(app_id)
         session = self.sessions.pop(app_id, None)
         if session:
             session['context'].close()
@@ -412,7 +420,9 @@ class BrowserWorker:
                             self.prepare(app_id)
                 except Exception as exc:
                     logger.warning('Browser worker will retry after %s.', type(exc).__name__)
-                self.stop.wait(1)
+                pages=[e['session'].page for e in self.sessions.values() if not e['session'].page.is_closed()]
+                if pages:pages[0].wait_for_timeout(30)  # Pump live frames and input promptly.
+                else:self.stop.wait(.1)
         finally:
             while not self.controls.empty():
                 _,payload,future=self.controls.get_nowait()

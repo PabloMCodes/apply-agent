@@ -123,7 +123,7 @@ and return when completed. This endpoint requires the integrated worker runtime.
   `token`. A changed page or stale token rejects the action.
 - `type` accepts `text`; it fills the currently focused editable field. Do not log
   request bodies. It does not interpret text as keyboard shortcuts or commands.
-- `key` accepts only Tab/Escape/Backspace/arrow keys. Enter is intentionally absent.
+- `key` accepts Tab/Escape/Backspace/arrows, Home/End/Delete, Shift+Tab, and ControlOrMeta+A. Enter is intentionally absent.
 - `scroll` accepts a bounded `delta`; `tab` selects a returned tab index.
 - `save_session` explicitly saves encrypted storage state for the application origin.
 - `resume` returns control to preparation/review; `ai` requests constrained mapping
@@ -145,3 +145,17 @@ sources once per page. No password, identity, or work-authorization sources are 
 Provider responses cannot supply executable actions or arbitrary values. Field labels
 are rechecked before applying the plan; populated fields are marked for user review.
 Final submission still uses the existing revision/fingerprint confirmation endpoint.
+
+
+`GET /applications/{id}/browser/frame` returns the latest in-memory Chromium
+viewport (`image` base64 JPEG, `url`, `width`, `height`, `status`) while preparing,
+ready, or in takeover. Before the first frame it returns only `status`. It does
+not pause preparation or enqueue browser commands and uses `Cache-Control: no-store`.
+
+The browser control `insert` operation inserts literal `text` at the focused caret;
+`type` remains available for replacing a whole field. Keyboard input also supports
+Home, End, Delete, Shift+Tab, and ControlOrMeta+A. Enter is rejected to prevent
+implicit submission. Tokens remain stable across unchanged viewport layouts and
+are renewed when the layout changes. The UI serializes inputs and coalesces wheel
+and touch scrolling. It polls the passive frame endpoint while watching, and
+refreshes the interactive viewport automatically while idle.

@@ -32,8 +32,10 @@ def login_page(page):
 
 def image_frame(entry):
     session=entry['session'];page=session.page
-    entry['control_token']=secrets.token_urlsafe(24)
-    entry['view_signature']=view_signature(page)
+    signature=view_signature(page)
+    if entry.get('view_signature')!=signature or not entry.get('control_token'):
+        entry['control_token']=secrets.token_urlsafe(24)
+    entry['view_signature']=signature
     # The image is never written to disk; login/MFA contents remain transient.
     return {'image':base64.b64encode(page.screenshot(type='jpeg',quality=75,full_page=False)).decode(),
             'token':entry['control_token'],'url':clean_url(page.url),'width':page.viewport_size['width'],'height':page.viewport_size['height'],
@@ -114,3 +116,13 @@ def view_signature(page):
             const r=e.getBoundingClientRect();return [e.tagName,e.type,e.getAttribute('role'),e.getAttribute('aria-label'),e.innerText,e.disabled,Math.round(r.x),Math.round(r.y),Math.round(r.width),Math.round(r.height)];
         })""")])
     return hashlib.sha256(json.dumps(observations).encode()).hexdigest()
+
+
+def insert_text(page,value):
+    """Insert literal text at the focused caret; Enter is never interpreted as submit."""
+    for frame in page.frames:
+        active=frame.evaluate_handle('()=>document.activeElement').as_element()
+        if active and active.evaluate("e=>!e.disabled && !e.readOnly && (e.isContentEditable || e.tagName==='TEXTAREA' || e.tagName==='INPUT' && ['text','email','password','search','tel','url','number'].includes(e.type))"):
+            page.keyboard.insert_text(value)
+            return
+    raise ValueError('Click an editable field before typing.')

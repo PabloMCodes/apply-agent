@@ -289,6 +289,16 @@ def router(path):
         except asyncio.TimeoutError:
             raise HTTPException(504,'Browser is busy. Refresh before issuing another action.') from None
 
+    @routes.get('/applications/{app_id}/browser/frame')
+    def live_browser_frame(app_id: int, request: Request, response: Response):
+        response.headers['Cache-Control']='no-store'
+        runtime=getattr(request.app.state,'runtime',None)
+        if not runtime:raise HTTPException(503,'Browser worker is not running.')
+        record=applications.get(path,app_id)
+        if not record or record['status'] not in ('preparing','ready','takeover'):
+            raise HTTPException(409,'No live application to watch.')
+        return dict(runtime.browser.live_view.read(app_id) or {},status=record['status'])
+
     @routes.get('/browser-sessions')
     def browser_sessions():
         from src.applications.session_vault import SessionVault

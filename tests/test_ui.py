@@ -90,6 +90,8 @@ def test_setup_interface_desktop_and_phone(tmp_path):
             page.get_by_text('Add and select applications',exact=True).click()
             page.get_by_role('button',name='Select all matching jobs',exact=True).click()
             page.get_by_role('button',name='Prepare selected (5)',exact=True).wait_for()
+            assert page.get_by_role('heading',name='Saved answers',exact=True).count()==0
+            page.get_by_role('link',name='Profile & resume',exact=False).click()
             page.get_by_role('heading',name='Saved answers',exact=True).wait_for()
 
             page.get_by_role('link',name='Overview',exact=False).click()

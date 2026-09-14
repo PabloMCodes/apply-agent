@@ -232,12 +232,15 @@ Identity, authorization, and consent questions are excluded from AI drafting.
 Unfamiliar or login pages remain open with status `takeover`. Open the application
 and choose **Open live browser**. The viewport is the worker's actual browser:
 
-1. Click an input in the image, enter text in the protected text box below it, and
-   press **Type into selected field**. Scroll/zoom controls help on phones.
+1. While a run is preparing, open its live browser to watch the worker fill it.
+   **Take control** becomes usable after preparation pauses or finishes. Click a
+   field and type directly; use your mouse wheel, trackpad, or a vertical swipe
+   to scroll the employer page. Zoom is available for small screens.
 2. Click supported sign-in, verification, Next/Back, or OAuth controls. Select a
-   popup tab if the identity provider opens one. **Refresh browser** updates the view.
+   popup tab if the identity provider opens one. The view refreshes automatically.
 3. After signing in, optionally choose **Remember this site login**. Then choose
-   **Resume worker / review**. Your current browser and earlier recorded pages remain.
+   **Resume worker / review** to watch filling continue. Choose **Return to review**
+   when ready to inspect all recorded answers. Your browser session remains open.
 4. For an unfamiliar form, **Use AI on this application page** maps fields to exact
    saved contact/professional facts. In Profile, you can separately enable this
    mapping during preparation. It requires a configured compatible model.
@@ -247,6 +250,12 @@ and choose **Open live browser**. The viewport is the worker's actual browser:
 
 The selected frozen resume can be attached by enabling the upload mode and clicking
 an actual file input/label. No arbitrary server filesystem path can be requested.
+Live viewing uses Chromium screencast frames; interaction uses ordered requests
+with automatic viewport refresh. It is near real time, not zero latency: network,
+employer loading, and long worker/model operations can still delay input. Enter
+is blocked to prevent implicit form submission; use the page’s Next button.
+Live frames are held only in memory and cleared when the session closes.
+
 Typed browser text is queued only in memory, not SQLite. Password/code values are
 redacted from form snapshots. Live viewport images are returned in memory rather
 than stored as login screenshots. Existing application screenshots remain local.
@@ -271,3 +280,5 @@ validated and mapped answers require review.
 Implementation references: [Playwright authentication](https://playwright.dev/python/docs/auth),
 [storage state](https://playwright.dev/python/docs/api/class-browsercontext#browser-context-storage-state),
 [Fernet](https://cryptography.io/en/latest/fernet/).
+
+Live viewport implementation reference: [Playwright CDP sessions](https://playwright.dev/python/docs/api/class-cdpsession).

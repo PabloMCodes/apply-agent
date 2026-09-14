@@ -256,3 +256,60 @@ def test_profile_choice_fills_greenhouse_custom_dropdown(browser_page):
     assert field['value']=='Male'
     assert field['review']['pending']
     assert field['review']['status']=='new_wording'
+
+
+def test_live_frames_update_without_control_and_are_discarded(browser_page):
+    from src.applications.live_view import LiveView
+    page=browser_page;view=LiveView();view.attach(1,page)
+    try:
+        page.set_content('<input aria-label="First name"><div style="height:2000px">Application</div>')
+        for _ in range(30):
+            page.wait_for_timeout(50)
+            if view.read(1):break
+        first=view.read(1)
+        assert first and first['image']
+        page.locator('input').fill('Jo')
+        for _ in range(30):
+            page.wait_for_timeout(50)
+            if view.read(1)['image']!=first['image']:break
+        assert view.read(1)['image']!=first['image']
+    finally:view.close(1)
+    assert view.read(1) is None
+
+
+def test_direct_input_preserves_caret_and_scrolls(browser_page,workspace):
+    from src.setup.schemas import BrowserControl
+    page=browser_page;path,app_id=workspace
+    page.set_content('<input aria-label="Name"><div style="height:2400px">Application</div>')
+    worker,_=worker_for(path,app_id,page)
+    view=worker.control(app_id,{'operation':'start'})
+    view=worker.control(app_id,{'operation':'click','token':view['token'],**center(page,'input')})
+    for text in ['J','o']:
+        view=worker.control(app_id,{'operation':'insert','token':view['token'],'text':text})
+    assert page.locator('input').input_value()=='Jo'
+    view=worker.control(app_id,{'operation':'key','token':view['token'],'key':'ArrowLeft'})
+    view=worker.control(app_id,{'operation':'insert','token':view['token'],'text':'X'})
+    assert page.locator('input').input_value()=='JXo'
+    worker.control(app_id,{'operation':'scroll','token':view['token'],'delta':500})
+    page.wait_for_function('window.scrollY>0')
+    with pytest.raises(ValueError):BrowserControl(operation='key',key='Enter')
+
+
+def test_live_frame_endpoint_is_read_only_and_not_cacheable(workspace):
+    from fastapi.testclient import TestClient
+    from types import SimpleNamespace
+    from src.api.app import create_app
+    from src.applications.live_view import LiveView
+    path,app_id=workspace
+    with TestClient(create_app(path)) as client:
+        view=LiveView();view.frames[app_id]={'image':'synthetic','width':1100,'height':850}
+        client.app.state.runtime=SimpleNamespace(browser=SimpleNamespace(live_view=view))
+        store.set_run(path,app_id,'preparing',{})
+        before=store.get(path,app_id)
+        result=client.get(f'/applications/{app_id}/browser/frame')
+        assert result.status_code==200 and result.json()['status']=='preparing'
+        assert result.headers['cache-control']=='no-store'
+        assert store.get(path,app_id)['revision']==before['revision']
+        store.set_run(path,app_id,'cancelled',{})
+        assert client.get(f'/applications/{app_id}/browser/frame').status_code==409
+        client.app.state.runtime=None
