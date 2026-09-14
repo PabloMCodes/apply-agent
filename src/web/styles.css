@@ -10,5 +10,3 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;font-size:12px}de
 .live-viewport{position:relative}.browser-keyboard{position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none}.live-browser{user-select:none;-webkit-user-drag:none}.live-browser:focus{outline:2px solid var(--green)}
 
 .live-panel [hidden]{display:none!important}
-
-.native-preview{cursor:pointer;max-height:65vh;object-fit:contain;object-position:top;background:#f7f7f2}

@@ -41,8 +41,8 @@ is also supported with a fresh isolated browser profile.
 ### Local browser windows
 
 `python main.py` now defaults to **native** mode on a Mac or Linux desktop.
-The worker prepares each application in a visible, isolated Chromium window.
-Open an application or click its preview to bring that exact window forward;
+The worker opens your selected applications as tabs in one visible Chromium
+window and fills them one at a time. Open an application to focus its exact tab;
 fields, cookies, uploads, and the current page stay intact. Type and scroll in
 Chromium directly, without the screenshot/input relay. Let preparation finish or
 pause before editing the window so your input does not race the worker.
@@ -50,7 +50,8 @@ pause before editing the window so your input does not race the worker.
 Finish reviewing before submitting in the employer page. Then choose **I submitted
 this application** in Apply Agent to update tracking and close the window. This
 records your report; it does not click Submit or verify employer acceptance.
-**Review in Apply Agent** captures your current answers without refilling or advancing.
+Only that application’s tab closes; the others remain open.
+**Review saved application details** captures your current answers without refilling or advancing.
 Keep the window open until you record completion. Closing it alone never means submitted.
 
 For remote servers or phone access, use `BROWSER_MODE=stream python main.py`.
@@ -58,6 +59,26 @@ Docker and `uvicorn main:app` default to streamed mode; a native window opens on
 the host computer, not the phone. `BROWSER_MODE=native` explicitly enables desktop
 mode when launching through another entry point. Switching modes requires a restart
 and fresh preparation: an existing headless session cannot become a desktop window.
+
+### Automatic answer memory
+
+After preparation finishes or pauses, native tabs remember manual text, select,
+recognized single-choice custom dropdown, and labelled radio-group answers. Input
+is saved after a short pause, a field change, or leaving the field; listeners are
+installed on subsequent pages too. Worker-generated fills are excluded. Reused
+answers still need review. Unsupported controls or ambiguous labels are not learned.
+
+Ordinary answers are reusable across companies; questions naming the employer or
+asking why you want this company/role stay company-scoped. Exact question matching
+and existing conflict checks apply. Clearing an answer removes that saved mapping.
+Manage answers in **Profile & resume**, or turn learning off in **Preferences**.
+The application page shows how many changes were saved. Native mode has no preview.
+
+Passwords, verification codes, signature fields, file inputs, and consent checkboxes
+are excluded. Saved responses and a per-application change history stay in your local
+SQLite database. Forgetting a reusable answer prevents reuse but does not erase the
+application's change history. This is not an AI inference feature or a recording of
+all browser activity. Keep the worker running while editing application tabs.
 
 ## Set up your workspace
 
@@ -113,7 +134,7 @@ a full remote desktop. Unsupported required controls block submission.
 Opening the employer link on your phone creates a separate session and does **not**
 transfer the filled form; use Apply Agent's review page for supported applications.
 
-Browser sessions expire after two hours, with five live review slots by default (configurable from 1–20).
+Streamed browser sessions expire after two hours, with five live review slots by default (configurable from 1–20). Native tabs remain until closed or the worker stops; selected jobs are opened in sequence without the streamed slot limit.
 Profile changes do not silently rewrite an already prepared application. Its resume
 file is frozen when preparation starts. A restart expires live drafts; prepare them
 again. A crash or ambiguous response during submission becomes `submission_unknown`
@@ -179,9 +200,9 @@ tests/                  Offline and opt-in browser tests
 In Applications, expand **Add and select applications** to paste hundreds of job
 records, select across pages, or select all matching jobs. Click **Prepare selected**.
 There is no UI selection cap; requests are sent in chunks of 500. The worker prepares
-one at a time and retains a configurable number of isolated review sessions. Additional
+one at a time. Native mode keeps them as tabs in one window; streamed mode retains a configurable number of isolated review sessions. Additional
 queued jobs wait for a slot. Keep Apply Agent running; employer sessions can expire
-sooner than our two-hour review window. Applications updates status automatically. Closing or submitting a review frees
+sooner than the streamed mode’s two-hour review window. Applications updates status automatically. Closing or submitting a review frees
 a slot for the next queued job.
 Unsupported forms or unanswered questions still need your attention.
 
@@ -284,7 +305,10 @@ than stored as login screenshots. Existing application screenshots remain local.
 Saved browser state is encrypted with Fernet, expires locally after seven days,
 and is reused only for the exact application origin. Cookies/local storage/IndexedDB
 can retain authentication; device-bound credentials and some session-storage flows
-may require another login. Each application still has an isolated browser context.
+may require another login. Streamed applications have isolated browser contexts.
+Native tabs share cookies and browser storage, like tabs in a normal window.
+Saved cookies/local storage from another site can be added to the shared session;
+IndexedDB state for additional sites may require signing in again.
 Use **Profile → Remembered site logins → Forget site login** to remove stored state;
 this does not sign out an already-open context or revoke the employer's session.
 The encryption key is stored with restricted permissions in the same local data

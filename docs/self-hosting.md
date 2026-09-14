@@ -118,7 +118,7 @@ volume for a consistent backup. Protect those copies: they contain your profile,
 bot token, optional model API key, resume files, and application screenshots. Local files are not encrypted
 by the application; rely on your device/server's storage and access protections.
 
-Browser sessions are held in memory for two hours, with five slots by default (1–20 in Preferences).
+Streamed browser sessions are held in memory for two hours, with five slots by default (1–20 in Preferences). Native applications share one browser window and remain open until closed or the worker stops.
 Queue selections can contain hundreds of jobs; new jobs start as slots become free. A restart
 expires live reviews and discards pending browser commands. Jobs whose submission
 was in progress become unknown rather than queued for retry. Browser contexts use
@@ -165,3 +165,9 @@ Set `BROWSER_MODE=stream` explicitly for remote/phone access. Native mode requir
 a graphical desktop and focuses a window on that host, never on a remote client.
 Changing modes requires restarting and preparing applications again. Desktop
 windows remain owned by the worker; closing the app or restarting ends them.
+
+Native mode shares browser storage across application tabs. Learning is on by default
+and can be disabled in Preferences. Manual answers and an application change history
+are stored in SQLite; the native UI does not generate or stream previews. Opening
+large batches as desktop tabs uses more browser memory. Streamed mode retains its
+existing session limit.

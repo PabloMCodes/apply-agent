@@ -35,7 +35,14 @@ def apply(path, session, company):
     fields = session.snapshot()['fields']
     reused = {}
     for field in fields:
-        key = question(field['label'])
+        key = question(field.get('question_label') or field['label'])
+        if field['type']=='radio':
+            if not field.get('question_label') or any(f['type']=='radio' and f['name']==field['name'] and f['value'] for f in fields):continue
+            matches=[a for a in saved if a['question']==key and a['field_type']=='radio' and a['company'] in ('',company.casefold())]
+            matches.sort(key=lambda a:bool(a['company']),reverse=True)
+            if matches and question(str(matches[0]['value']))==question(field['label']) and sum(f['type']=='radio' and f['name']==field['name'] and question(f['label'])==question(field['label']) for f in fields)==1:
+                session.edit(field['id'],True);reused[field['id']]=matches[0]['id']
+            continue
         if (isinstance(getattr(session, 'field_reviews', None), dict) and session.field_reviews.get(field['id'], {}).get('conflict')) or field['value'] or not field['supported'] or sum(question(f['label']) == key for f in fields) != 1:
             continue
         matches = [a for a in saved if a['question'] == key and a['field_type'] == field['type'] and a['company'] in ('', company.casefold())]

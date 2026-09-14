@@ -4,7 +4,7 @@ import json
 from src.db.database import connect
 
 DEFAULTS = {
-    'review_slots': 5, 'roles': [], 'locations': [], 'exclude_keywords': [],
+    'native_learning': True, 'review_slots': 5, 'roles': [], 'locations': [], 'exclude_keywords': [],
     'poll_minutes': 15, 'monitoring_enabled': False,
     'review_base_url': '',
 }

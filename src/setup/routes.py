@@ -276,6 +276,14 @@ def router(path):
         answers.forget(path, answer_id)
         return Response(status_code=204)
 
+    @routes.get('/applications/{app_id}/learning')
+    def learned_answers(app_id: int):
+        record=applications.get(path,app_id)
+        if not record:raise HTTPException(404,'Application not found.')
+        with db.connect(path) as conn:
+            count=conn.execute('SELECT count(*) FROM learned_answers WHERE application_id=?',(app_id,)).fetchone()[0]
+        return {'changes_saved':count,'enabled':store.preferences(path)['native_learning'],'status':record['status']}
+
     @routes.get('/browser/status')
     def browser_status(request: Request):
         runtime=getattr(request.app.state,'runtime',None)

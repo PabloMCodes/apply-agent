@@ -18,6 +18,12 @@ def initialize(path):
                 company TEXT NOT NULL, value TEXT NOT NULL,
                 UNIQUE(question, field_type, company)
             );
+            CREATE TABLE IF NOT EXISTS learned_answers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                application_id INTEGER NOT NULL, question TEXT NOT NULL,
+                field_type TEXT NOT NULL, value TEXT NOT NULL,
+                source_url TEXT NOT NULL, created_at REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS application_runs (
                 id INTEGER PRIMARY KEY,
                 status TEXT NOT NULL,

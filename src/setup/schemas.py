@@ -6,6 +6,7 @@ Keyword = Annotated[str, Field(min_length=1, max_length=100)]
 
 
 class Preferences(InputModel):
+    native_learning: bool = True
     review_slots: int = Field(default=5, ge=1, le=20)
     roles: list[Keyword] = Field(default_factory=list, max_length=100)
     locations: list[Keyword] = Field(default_factory=list, max_length=100)

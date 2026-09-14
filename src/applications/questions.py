@@ -85,7 +85,12 @@ def flag_conflicts(path, profile, session, company):
         matches.sort(key=lambda a:bool(a['company']),reverse=True)
         if matches:
             values.append(str(matches[0]['value']))
-        if len({question(v) for v in values}) > 1:
+        known=match(profile,field['label'])
+        normalized=set()
+        for value in values:
+            equivalent=known and matching_options([{'label':str(value)}],known['value'],known.get('answer_key',''))[0]
+            normalized.add(question(known['value'] if equivalent else value))
+        if len(normalized) > 1:
             session.field_reviews[field['id']] = {'status':'needs_answer','pending':True,'conflict':True,
                 'source':'Conflicting profile facts or saved answers. Correct the sources or answer this question yourself.'}
 

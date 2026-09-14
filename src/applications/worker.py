@@ -31,12 +31,15 @@ class BrowserWorker:
         self.browser_mode = native.mode()
         self.sessions = {}
         self.browser = None
+        self.native_context = None
         self.playwright = None
         self.controls = Queue(maxsize=32)
         self.in_control = False
         self.vault = SessionVault(path)
         from src.applications.live_view import LiveView
         self.live_view = LiveView()
+        from src.applications.learning import Learner
+        self.learner = Learner(self)
 
     def start_browser(self):
         if self.browser is None:
@@ -50,14 +53,28 @@ class BrowserWorker:
     def capture(self, app_id, session):
         if takeover.login_page(session.page):
             raise takeover.NeedsTakeover('Login or verification requires browser takeover.')
-        directory = self.path.parent / 'applications' / str(app_id)
-        directory.mkdir(parents=True, exist_ok=True)
-        # Rename so the API never serves half-written screenshots.
-        temp = directory / 'review.tmp.png'
-        session.page.screenshot(path=str(temp), full_page=True, timeout=15000)
-        temp.replace(directory / 'review.png')
+        if self.browser_mode!='native':
+            directory = self.path.parent / 'applications' / str(app_id)
+            directory.mkdir(parents=True, exist_ok=True)
+            # Rename so the API never serves half-written screenshots.
+            temp = directory / 'review.tmp.png'
+            session.page.screenshot(path=str(temp), full_page=True, timeout=15000)
+            temp.replace(directory / 'review.png')
         snapshot = session.snapshot()
-        snapshot['expires_at'] = self.sessions[app_id]['expires']
+        manual=self.sessions[app_id].get('manual_answers',{})
+        changed=False
+        for field in snapshot['fields']:
+            key=answers.question(field.get('question_label') or field['label'])
+            value=field['value']
+            if field['type']=='select':value=next((o['label'] for o in field['options'] if o['value']==value),'')
+            elif field['type']=='radio':value=field['label'] if value else None
+            if key in manual and value is not None and str(value).strip()==manual[key]:
+                session.reused_answers.pop(field['id'],None)
+                session.field_reviews[field['id']]={'status':'previously_confirmed','source':'Entered by you in the browser; saved to answer memory','pending':False}
+                changed=True
+        if changed:snapshot=session.snapshot()
+        snapshot['native'] = self.browser_mode=='native'
+        snapshot['expires_at'] = None if snapshot['native'] else self.sessions[app_id]['expires']
         snapshot['entry_url'] = self.sessions[app_id].get('entry_url', session.page.url)
         snapshot['pages'] = [dict(value, page_number=number) for number,value in sorted(session.history.items()) if number != session.page_number]
         snapshot['ai_message'] = self.sessions[app_id].get('ai_message','')
@@ -84,7 +101,20 @@ class BrowserWorker:
             saved_state = self.vault.load(url)
             context_options = {'viewport':{'width':1100,'height':850},'service_workers':'block'}
             if saved_state: context_options['storage_state'] = saved_state
-            context = self.browser.new_context(**context_options)
+            shared=self.browser_mode=='native'
+            context=self.native_context if shared else None
+            fresh=context is None
+            if fresh:
+                context=self.browser.new_context(**context_options)
+                if shared:
+                    self.native_context=context
+                    self.learner.attach(context)
+            elif saved_state:
+                # Keep active login cookies; add missing saved cookies for another site.
+                existing={(c['name'],c['domain'],c['path']) for c in context.cookies()}
+                context.add_cookies([c for c in saved_state.get('cookies',[]) if (c['name'],c['domain'],c['path']) not in existing])
+                origins=[{'origin':o['origin'],'localStorage':o.get('localStorage',[])} for o in saved_state.get('origins',[])]
+                context.add_init_script('for (const o of '+json.dumps(origins)+') { if(location.origin===o.origin) for(const v of o.localStorage) if(localStorage.getItem(v.name)===null) localStorage.setItem(v.name,v.value); }')
             # Career pages can redirect to external ATS providers, but never private services.
             def guard(route):
                 request = route.request
@@ -94,9 +124,12 @@ class BrowserWorker:
                     route.continue_()
             page = context.new_page()
             page.set_default_timeout(5000)
-            context.route('**/*', guard)
-            self.sessions[app_id] = {'context': context, 'session': GenericSession(page), 'expires': time.time() + 7200, 'entry_url':url,'adapter':'generic'}
-            self.live_view.attach(app_id,page)
+            if fresh:context.route('**/*', guard)
+            self.sessions[app_id] = {'context': context, 'session': GenericSession(page), 'expires': time.time() + 7200, 'entry_url':url,'adapter':'generic','automating':True}
+            if shared:
+                self.sessions[app_id]['pages']=[page]
+                page.on('popup',lambda popup:self.sessions.get(app_id,{}).get('pages',[]).append(popup))
+            else:self.live_view.attach(app_id,page)
             self.freeze_resume(app_id,record)
             page.goto(url, wait_until='load', timeout=30000)
             if takeover.login_page(page):
@@ -140,6 +173,10 @@ class BrowserWorker:
             logger.warning('Application %s preparation failed (%s).', app_id, type(exc).__name__)
             store.set_run(self.path, app_id, 'error', message='Could not prepare this form. Check that Chromium is installed and the job is still open. Custom forms may need manual completion.', notify=True)
 
+        finally:
+            if self.browser_mode=='native' and app_id in self.sessions:
+                self.learner.set_recording(self.sessions[app_id],True)
+
     def freeze_resume(self, app_id, record):
         resume, reason = resumes.choose(self.path, app_id, record['title'] or '')
         self.sessions[app_id]['resume'] = {'id':resume['id'],'title':resume['title'],'reason':reason} if resume else None
@@ -154,6 +191,14 @@ class BrowserWorker:
         self.sessions[app_id]['resume_path'] = resume_path
 
     def fill_pages(self, app_id, profile, company, advance=True):
+        entry=self.sessions[app_id]
+        previous=entry.get('automating',True)
+        if self.browser_mode=='native':self.learner.set_recording(entry,False)
+        try:self._fill_pages(app_id,profile,company,advance)
+        finally:
+            if self.browser_mode=='native':self.learner.set_recording(entry,not previous)
+
+    def _fill_pages(self, app_id, profile, company, advance=True):
         session = self.sessions[app_id]['session']
         for _ in range(20):
             if not self.in_control:self.service_control()
@@ -221,20 +266,20 @@ class BrowserWorker:
             raise ValueError('No live browser session. Prepare the application again.')
         if record.get('job_status') in (None,'skipped','applied'):
             raise ValueError('This job was removed, skipped, or marked applied. Close this browser session.')
-        if time.time()>entry['expires']:
+        if self.browser_mode!='native' and time.time()>entry['expires']:
             raise ValueError('This review session expired. Prepare the application again.')
         operation=payload['operation'];session=entry['session'];page=session.page
         if page.is_closed():
-            pages=[p for p in entry['context'].pages if not p.is_closed()]
+            pages=[p for p in entry.get('pages',entry['context'].pages) if not p.is_closed()]
             if not pages:raise ValueError('All browser tabs were closed. Prepare the application again.')
             page=pages[-1];session=entry.get('tab_sessions',{}).get(page) or GenericSession(page)
             entry['session']=session;entry['adapter']='generic' if isinstance(session,GenericSession) else entry['adapter']
-        self.live_view.attach(app_id,page)
+        if self.browser_mode!='native':self.live_view.attach(app_id,page)
         if operation=='focus':
             if self.browser_mode!='native':raise ValueError('This session runs in streamed mode. Restart with BROWSER_MODE=native and prepare it again for a desktop window.')
             self.pause_for_takeover(app_id,'Open in your desktop browser. Finish and review the application there.')
             focused=native.focus(page)
-            return dict(takeover.image_frame(entry),native=True,message='Your prepared browser window is open.' if focused else 'Select the Chromium window in your Dock to continue.')
+            return dict(native=True,message='Your prepared browser window is open.' if focused else 'Select the Chromium window in your Dock to continue.')
         if operation=='native_submitted':
             if self.browser_mode!='native':raise ValueError('Manual browser completion is available in native mode only.')
             store.set_run(self.path,app_id,'submitted',record['snapshot'],'Marked submitted by you in the desktop browser.')
@@ -246,7 +291,7 @@ class BrowserWorker:
         if operation=='review' and record['status']=='ready':
             return {'resumed':True,'message':'Ready for answer review.'}
         if record['status']!='takeover':raise ValueError('Open browser takeover before operating this page.')
-        if operation!='refresh' and payload.get('token')!=entry.get('control_token'):
+        if self.browser_mode!='native' and operation!='refresh' and payload.get('token')!=entry.get('control_token'):
             raise ValueError('The browser view changed. Refresh before another action.')
         if operation in ('click','type','insert','key','mark_final','upload_resume') and entry.get('view_signature') != takeover.view_signature(page):
             raise ValueError('The page changed since the screenshot. Refresh before interacting.')
@@ -273,7 +318,7 @@ class BrowserWorker:
             page.mouse.wheel(0,payload['delta'])
         elif operation=='key':page.keyboard.press(payload['key'])
         elif operation=='tab':
-            tabs=entry['context'].pages
+            tabs=entry.get('pages',entry['context'].pages)
             if payload['tab']>=len(tabs):raise ValueError('Tab is no longer available.')
             saved_tabs=entry.setdefault('tab_sessions',{})
             saved_tabs[session.page]=session
@@ -314,6 +359,7 @@ class BrowserWorker:
             store.set_run(self.path,app_id,'ready',self.capture(app_id,session),message)
             return {'resumed':True,'message':message}
         elif operation!='refresh':raise ValueError('Unsupported browser operation.')
+        if self.browser_mode=='native':return {'native':True,'message':message}
         self.live_view.attach(app_id,entry['session'].page)
         return dict(takeover.image_frame(entry),message=message)
 
@@ -321,7 +367,10 @@ class BrowserWorker:
         self.live_view.close(app_id)
         session = self.sessions.pop(app_id, None)
         if session:
-            session['context'].close()
+            if self.browser_mode=='native' and session['context'] is self.native_context:
+                for page in session.get('pages',[session['session'].page]):
+                    if not page.is_closed():page.close()
+            else:session['context'].close()
 
     def handle(self, command):
         app_id = command['application_id']
@@ -329,7 +378,7 @@ class BrowserWorker:
         payload = json.loads(command['payload'])
         record = store.get(self.path, app_id)
         if kind == 'retry':
-            if app_id not in self.sessions and len(self.sessions) >= settings.preferences(self.path)['review_slots']:
+            if self.browser_mode!='native' and app_id not in self.sessions and len(self.sessions) >= settings.preferences(self.path)['review_slots']:
                 store.set_run(self.path, app_id, record['status'], record['snapshot'], 'All review slots are occupied. Close or submit one before retrying.')
                 return
             self.close(app_id)
@@ -413,16 +462,17 @@ class BrowserWorker:
             while not self.stop.is_set():
                 try:
                     for app_id, value in list(self.sessions.items()):
-                        if not any(not p.is_closed() for p in value['context'].pages):
+                        if not any(not p.is_closed() for p in value.get('pages',value['context'].pages)):
                             previous=store.get(self.path,app_id)
                             self.close(app_id)
                             store.set_run(self.path,app_id,'needs_attention',snapshot=previous['snapshot'],message='Browser window closed. Check whether you submitted before preparing again.')
                             continue
-                        if time.time() > value['expires']:
+                        if self.browser_mode!='native' and time.time() > value['expires']:
                             record = store.get(self.path, app_id)
                             self.close(app_id)
                             store.set_run(self.path, app_id, 'expired', record['snapshot'], 'Review session expired after two hours. Prepare it again to continue.', notify=True)
-                    if self.browser is not None and hasattr(self.browser,'is_connected') and not self.browser.is_connected():self.browser=None
+                    if self.browser is not None and hasattr(self.browser,'is_connected') and not self.browser.is_connected():
+                        self.browser=None;self.native_context=None
                     if self.service_control():
                         continue
                     command = store.next_command(self.path)
@@ -437,7 +487,7 @@ class BrowserWorker:
                             self.close(command['application_id'])
                         finally:
                             store.complete_command(self.path, command['id'])
-                    elif len(self.sessions) < settings.preferences(self.path)['review_slots']:
+                    elif self.browser_mode=='native' or len(self.sessions) < settings.preferences(self.path)['review_slots']:
                         app_id = store.next_queued(self.path)
                         if app_id:
                             self.prepare(app_id)

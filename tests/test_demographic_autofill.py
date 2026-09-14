@@ -50,3 +50,17 @@ def test_combined_race_requires_its_own_explicit_choice():
     profile['application_answers']['race_ethnicity']='Hispanic or Latino'
     apply(profile,form);assert form.field['value']=='h'
     assert form.field_reviews['q']['pending']
+
+
+def test_learned_choice_equivalent_to_profile_is_not_a_conflict(monkeypatch):
+    from src.applications.questions import flag_conflicts
+    from src.applications import answers
+    saved={'question':'gender','field_type':'select','company':'','value':'Male'}
+    monkeypatch.setattr(answers,'list_answers',lambda path:[saved])
+    profile={'application_answers':{'gender':'Man'}}
+    form=Form('Gender',[],kind='select')
+    flag_conflicts(None,profile,form,'Acme')
+    assert form.field_reviews=={}
+    saved['value']='Female'
+    flag_conflicts(None,profile,form,'Acme')
+    assert form.field_reviews['q']['conflict']

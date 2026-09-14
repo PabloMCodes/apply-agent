@@ -27,7 +27,9 @@ SCAN = r'''() => {
     const knownCombo = custom && select && !select.querySelector('.select__multi-value');
     const type = custom ? (knownCombo ? 'combobox' : 'custom') : el.tagName === 'SELECT' ? 'select' : el.type || 'text';
     if (el.type === 'file' && el.id === 'resume') label = 'Resume';
-    return {id:el.dataset.applyAgentId, label:label.slice(0,600), name:el.name || el.id,
+    const group=el.closest('fieldset,[role=radiogroup]');
+    const groupLabel=el.type==='radio' ? (group?.querySelector('legend')?.textContent || group?.getAttribute('aria-label') || '') : '';
+    return {question_label:groupLabel.trim().slice(0,600),id:el.dataset.applyAgentId, label:label.slice(0,600), name:el.name || el.id,
       type, required:el.required || el.getAttribute('aria-required') === 'true' || label.includes('*'),
       credential, value: credential ? '' : type === 'combobox' ? (select.querySelector('.select__single-value')?.textContent || '') :
         type === 'file' ? [...el.files].map(f=>f.name).join(', ') :

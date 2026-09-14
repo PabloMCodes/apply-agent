@@ -1,4 +1,4 @@
-"""The desktop preview focuses a session; it never forwards typing or clicks."""
+"""The local manager opens a tab and has no preview or forwarded input."""
 import base64
 import json
 import os
@@ -25,7 +25,7 @@ def test_native_preview_focuses_prepared_window_and_opens_review():
             data={}
             if path=='/browser/status':data={'mode':'native','running':True}
             elif path=='/applications/1':data=record
-            elif path.endswith('/browser/frame'):data={'image':jpeg,'status':record['status']}
+            elif path.endswith('/learning'):data={'changes_saved':2,'enabled':True,'status':record['status']}
             elif path.endswith('/browser'):
                 op=route.request.post_data_json['operation'];operations.append(op)
                 if op=='focus':
@@ -37,7 +37,7 @@ def test_native_preview_focuses_prepared_window_and_opens_review():
             route.fulfill(content_type='application/json',body=json.dumps(data))
         page.route('**/*',respond)
         page.goto('http://apply-agent.test/#applications/1')
-        preview=page.get_by_role('button',name='Open prepared application in desktop browser',exact=True)
+        preview=page.get_by_role('button',name='Open application tab',exact=True)
         preview.wait_for()
         assert operations==['focus']
         with page.expect_request(lambda r:r.method=='POST' and r.url.endswith('/browser')):
@@ -45,7 +45,8 @@ def test_native_preview_focuses_prepared_window_and_opens_review():
         page.get_by_text('Your prepared browser window is open.',exact=True).wait_for()
         assert operations==['focus','focus']
         assert page.get_by_label('Browser keyboard input',exact=True).count()==0
-        page.get_by_role('button',name='Review in Apply Agent',exact=True).click()
+        assert page.locator('.native-preview,.live-browser').count()==0
+        page.get_by_role('button',name='Review saved application details',exact=True).click()
         page.get_by_role('heading',name='Your answers',exact=True).wait_for()
         assert page.url.endswith('/answers')
         assert operations==['focus','focus','review']

@@ -172,5 +172,12 @@ Native browser operations use the existing `/applications/{id}/browser` endpoint
 - `native_submitted` records the user's report of submission and closes that session.
   It does not click employer controls or claim independent confirmation.
 
-The desktop preview only launches/focuses the prepared window. Native input is
-handled by Chromium directly; streamed keyboard/mouse commands are not used.
+The local application page opens/focuses the prepared tab without a preview.
+Native input is handled by Chromium directly; streamed input commands are not used.
+
+`GET /applications/{id}/learning` returns `changes_saved`, `enabled`, and run
+`status`. Preferences now include `native_learning` (default true). Native answer
+listeners save supported manual changes into `saved_answers` and a local
+`learned_answers` audit table. They do not send keystrokes to an AI provider.
+Native `focus` returns a message and `native: true`, with no screenshot or token.
+The native UI no longer requests browser frames; streamed mode is unchanged.
