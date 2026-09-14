@@ -212,3 +212,47 @@ def test_explicit_selected_resume_upload_through_file_chooser(browser_page,works
     view=worker.control(app_id,{'operation':'start'})
     worker.control(app_id,{'operation':'upload_resume','token':view['token'],**center(page,'button')})
     assert page.locator('#resume').evaluate('e=>e.files[0].name')=='selected.pdf'
+
+
+def test_profile_demographic_native_dropdowns_fill_but_block_submission(browser_page):
+    from src.applications.questions import apply
+    page=browser_page
+    page.set_content('''<form id=application>
+<label>Gender*<select><option value="">Select...</option><option value=m>Male</option></select></label>
+<label>Veteran Status*<select><option value="">Select...</option><option value=n>I am not a protected veteran</option></select></label>
+<button type=button>Submit application</button></form>''')
+    session=GenericSession(page)
+    apply({'application_answers':{'gender':'Man','veteran':'I am not a protected veteran'}},session)
+    assert page.locator('select').nth(0).input_value()=='m'
+    assert page.locator('select').nth(1).input_value()=='n'
+    snapshot=session.snapshot()
+    assert all(f['review']['pending'] for f in snapshot['fields'] if f['type']=='select')
+    assert not snapshot['can_submit']
+
+
+def test_profile_choice_fills_greenhouse_custom_dropdown(browser_page):
+    from src.applications.questions import apply
+    page=browser_page
+    page.set_content('''<div class=select><label for=gender>Gender*</label>
+<span class=select__single-value></span><input id=gender role=combobox></div>''')
+    page.evaluate('''() => {
+      const div=document.querySelector('.select'), input=document.querySelector('input');
+      function choices(){
+        div.querySelector('[role=listbox]')?.remove();
+        const list=document.createElement('div');list.setAttribute('role','listbox');
+        for(const name of ['Male','Female','Decline to self-identify']){
+          const option=document.createElement('div');option.setAttribute('role','option');option.textContent=name;
+          option.onclick=()=>{div.querySelector('.select__single-value').textContent=name;input.value='';list.remove();};
+          list.append(option);
+        }
+        div.append(list);
+      }
+      input.onclick=choices;input.oninput=choices;
+      input.onkeydown=e=>{if(e.key==='Escape')div.querySelector('[role=listbox]')?.remove();};
+    }''')
+    session=GenericSession(page)
+    apply({'application_answers':{'gender':'Man'}},session)
+    field=session.snapshot()['fields'][0]
+    assert field['value']=='Male'
+    assert field['review']['pending']
+    assert field['review']['status']=='new_wording'

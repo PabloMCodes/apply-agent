@@ -19,14 +19,15 @@ def match(profile, label):
         context = fact.get('context', '')
         if not (exact or variant) or (context and question(context) not in key):
             continue
-        # Sensitive variants are suggestions, never entered automatically.
+        # Only the structured voluntary answers opt into deterministic autofill.
         candidates.append((fact, exact))
     if len(candidates) != 1:
         return None
     fact, exact = candidates[0]
     return {'value':fact['answer'], 'status':'previously_confirmed' if exact else 'new_wording',
             'source':f"Profile fact: {fact['question']}" + (f" ({fact['context']})" if fact.get('context') else ''),
-            'pending':True, 'suggest_only':fact.get('sensitive',False) or sensitive(label)}
+            'pending':True, 'suggest_only':(fact.get('sensitive',False) or sensitive(label)) and not fact.get('autofill',False),
+            'answer_key':fact.get('id','').removeprefix('application:') if fact.get('autofill') else ''}
 
 
 def apply(profile, session):
@@ -38,6 +39,13 @@ def apply(profile, session):
             continue
         if sum(question(f['label']) == question(field['label']) for f in fields) != 1:
             continue
+        # Read custom choices before matching: they may distinguish separate race
+        # from a combined race/ethnicity question. Never search using an assumed answer.
+        if field['type']=='combobox' and (match(profile,field['label']) or question(field['label']) in ('race','race / ethnicity','race/ethnicity','race & ethnicity','race and ethnicity')):
+            try:
+                field['options']=session.find_options(field['id'], '')
+            except Exception:
+                continue
         result = race_suggestion(profile, field) or match(profile, field['label'])
         if not result:
             continue
@@ -46,13 +54,16 @@ def apply(profile, session):
             session.field_reviews[field['id']] = dict(result, draft=value)
             continue
         try:
-            if field['type'] == 'select':
-                options = [o for o in field['options'] if question(o['label']) == question(value)]
+            if field['type'] in ('select','combobox'):
+                options, mapped = matching_options(field['options'], value, result.get('answer_key',''))
                 if len(options) != 1:
+                    session.field_reviews[field['id']] = dict(result, draft=value,
+                        status='needs_answer', source=result['source']+' — no unique equivalent employer choice')
                     continue
                 value = options[0]['value']
-            if field['type'] == 'combobox':
-                session.find_options(field['id'], value)
+                if mapped:
+                    result['status']='new_wording'
+                    result['source'] += f" — saved choice: {result['value']}; employer choice: {options[0]['label']}"
             session.edit(field['id'], value)
             session.field_reviews[field['id']] = result
         except Exception:
@@ -77,3 +88,28 @@ def flag_conflicts(path, profile, session, company):
         if len({question(v) for v in values}) > 1:
             session.field_reviews[field['id']] = {'status':'needs_answer','pending':True,'conflict':True,
                 'source':'Conflicting profile facts or saved answers. Correct the sources or answer this question yourself.'}
+
+
+# Narrow, field-specific wording equivalents. Do not infer one identity from another.
+OPTION_EQUIVALENTS = {
+    'gender': [('Man','Male'), ('Woman','Female')],
+    'veteran': [('I identify as a protected veteran','I identify as one or more of the classifications of a protected veteran')],
+    'disability': [
+        ('Yes, I have a disability, or have had one in the past','Yes, I have a disability, or have had one in the past.'),
+        ('No, I do not have a disability and have not had one in the past','No, I do not have a disability and have not had one in the past.'),
+    ],
+}
+DECLINE_EQUIVALENTS = ('Prefer not to disclose','I do not wish to answer','I don’t wish to answer','I do not want to answer','Decline to self-identify','Decline to answer','I choose not to disclose')
+
+
+def matching_options(options, value, answer_key):
+    exact=[o for o in options if question(o['label'])==question(value)]
+    if exact:return exact, False
+    groups=list(OPTION_EQUIVALENTS.get(answer_key,[]))
+    if answer_key in ('gender','hispanic','veteran','disability','race','race_ethnicity'):
+        groups.append(DECLINE_EQUIVALENTS)
+    aliases=set()
+    for group in groups:
+        normalized={question(v) for v in group}
+        if question(value) in normalized:aliases.update(normalized)
+    return [o for o in options if question(o['label']) in aliases], True

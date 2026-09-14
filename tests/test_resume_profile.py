@@ -49,7 +49,7 @@ def test_empty_and_sparse_resumes_do_not_invent_profile():
 def test_optional_answers_and_country_specific_matching():
     profile=Profile(application_answers={'gender':'Prefer not to disclose','work_authorized':'Yes','authorization_country':'United States'}).model_dump()
     assert match(profile,'Gender')['value']=='Prefer not to disclose'
-    assert match(profile,'Gender')['suggest_only']
+    assert not match(profile,'Gender')['suggest_only']
     assert match(profile,'Are you legally authorized to work in the United States?')['value']=='Yes'
     assert match(profile,'Are you legally authorized to work in Canada?') is None
     assert facts(Profile().model_dump())==[]

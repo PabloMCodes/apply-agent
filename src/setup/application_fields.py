@@ -53,7 +53,7 @@ def facts(profile):
             for c in countries:
                 labels += ([f'Are you legally authorized to work in the {c}?',f'Are you legally authorized to work in {c}?',f'Are you legally authorized to work for any employers in the {c}?'] if key=='work_authorized' else
                            [f'Will you need sponsorship to work in the {c} now or anytime in the future?',f'Will you require sponsorship to work in {c}?'])
-        result.append({'id':'application:'+key,'question':labels[0],'variants':labels[1:],'answer':value,'sensitive':field['sensitive'],'context':''})
+        result.append({'id':'application:'+key,'question':labels[0],'variants':labels[1:],'answer':value,'sensitive':field['sensitive'],'context':'','autofill':key in ('gender','hispanic','veteran','disability')})
     return result
 
 
@@ -66,5 +66,5 @@ def race_suggestion(profile, field):
     combined=any('hispanic' in option or 'latino' in option for option in labels) or 'ethnic' in label
     if not labels: return None
     value=profile.get('application_answers',{}).get('race_ethnicity' if combined else 'race','')
-    if not value: return None
-    return {'value':value,'draft':value,'status':'new_wording','pending':True,'source':'Profile: '+('combined race / ethnicity' if combined else 'separate race'),'suggest_only':True}
+    if not value or value=='Self-describe on each application': return None
+    return {'value':value,'draft':value,'status':'new_wording','pending':True,'source':'Profile: '+('combined race / ethnicity' if combined else 'separate race'),'suggest_only':False,'answer_key':'race_ethnicity' if combined else 'race'}

@@ -182,6 +182,11 @@ graduation year/GPA, current employer/title, start date, salary, relocation/hybr
 country-specific authorization and sponsorship, citizenship, and optional gender,
 Hispanic/Latino ethnicity, separate or combined race/ethnicity, protected veteran,
 and disability status. All default to unanswered. See [research notes](docs/swe-profile-research.md).
+Explicit saved voluntary answers now fill supported dropdowns when there is one
+matching employer choice, including narrow wording equivalents such as Man/Male.
+Every reused choice still requires confirmation before submission. Pronouns are
+not derived from gender; combined race/ethnicity requires its own saved answer.
+Unknown, ambiguous, and conflicting choices stay unanswered.
 The former narrative boxes and custom fact editor have been removed from the UI;
 previously saved data remains compatible with the API.
 

@@ -15,7 +15,11 @@ SCAN = r'''() => {
     (el.type === 'file' || el.getClientRects().length > 0) && !el.disabled
   ).map(el => {
     if (!el.dataset.applyAgentId) el.dataset.applyAgentId = 'f' + (++window.__applyAgentId);
-    let label = [...(el.labels || [])].map(l => l.innerText).join(' ').trim();
+    let label = [...(el.labels || [])].map(l => {
+      const copy=l.cloneNode(true);
+      copy.querySelectorAll('input,select,textarea,button').forEach(node=>node.remove());
+      return copy.textContent;
+    }).join(' ').trim();
     if (!label) label = el.getAttribute('aria-label') || el.name || el.id || 'Unlabelled field';
     const credential = el.type === 'password' || /password|passcode|one.?time|verification.?code|security.?code|auth.?token|otp/i.test(label+' '+el.name+' '+el.id+' '+el.autocomplete);
     const custom = el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') === 'list';
