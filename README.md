@@ -230,16 +230,16 @@ Identity, authorization, and consent questions are excluded from AI drafting.
 ### Live browser takeover and saved logins
 
 Unfamiliar or login pages remain open with status `takeover`. Open the application
-and choose **Open live browser**. The viewport is the worker's actual browser:
+from **Applications** to go straight into the worker’s actual browser session:
 
 1. While a run is preparing, open its live browser to watch the worker fill it.
-   **Take control** becomes usable after preparation pauses or finishes. Click a
+   Control becomes available automatically after preparation pauses or finishes. Click a
    field and type directly; use your mouse wheel, trackpad, or a vertical swipe
    to scroll the employer page. Zoom is available for small screens.
 2. Click supported sign-in, verification, Next/Back, or OAuth controls. Select a
    popup tab if the identity provider opens one. The view refreshes automatically.
 3. After signing in, optionally choose **Remember this site login**. Then choose
-   **Resume worker / review** to watch filling continue. Choose **Return to review**
+   **Resume worker / review** to watch filling continue. Choose **Review answers & submit**
    when ready to inspect all recorded answers. Your browser session remains open.
 4. For an unfamiliar form, **Use AI on this application page** maps fields to exact
    saved contact/professional facts. In Profile, you can separately enable this

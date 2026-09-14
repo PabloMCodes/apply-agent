@@ -238,7 +238,7 @@ async function applications(id) {
   const list=el('div'),pagination=el('div',{class:'pagination'});
   function paint(items){
     list.replaceChildren();
-    for(const item of items)list.append(el('article',{class:'application-item'},el('div',{class:'row'},el('div',{},el('h3',{},item.title||`Application #${item.id}`),el('div',{class:'item-meta'},item.company||item.application_url)),badge(item.status)),link(item.status==='ready'?'Review application →':'View application →',`#applications/${item.id}`,'secondary')));
+    for(const item of items)list.append(el('article',{class:'application-item'},el('div',{class:'row'},el('div',{},el('h3',{},link(item.title||`Application #${item.id}`,`#applications/${item.id}`,'')),el('div',{class:'item-meta'},item.company||item.application_url)),badge(item.status)),link(item.status==='ready'?'Open application →':'View application →',`#applications/${item.id}`,'secondary')));
     if(!items.length)list.append(empty('You make the first move.','Select jobs below to fill your queue.'));
     const prev=button('Previous runs',async()=>{offset=Math.max(0,offset-50);await refresh();},'secondary');prev.disabled=offset===0;
     const next=button('More runs',async()=>{offset+=50;await refresh();},'secondary');next.disabled=items.length<50;
@@ -254,10 +254,23 @@ async function review(id) {
   let record=await api(`/applications/${id}`);
   const container=el('div');
   let browserOpen=false;
+  const answerView=location.hash.endsWith('/answers');
   const liveContainer=el('div');
+  async function openBrowser(){
+    if(browserOpen)return;
+    browserOpen=true;
+    liveContainer.replaceChildren(el('p',{},'Opening your application browser…'));
+    liveContainer.replaceChildren(await browserPanel(id,()=>{location.hash=`applications/${id}/answers`;},record.status==='preparing'));
+  }
   function paint(){
     const snapshot=record.snapshot||{},ready=record.status==='ready';
     const banner=el('div',{class:'review-banner'},el('div',{class:'row'},el('h3',{},record.message||'Waiting for the browser worker…'),badge(record.status)),snapshot.url?external('Application form ↗',snapshot.url,'quiet'):null,snapshot.expires_at&&ready?el('p',{},`Live review expires at ${new Date(snapshot.expires_at*1000).toLocaleTimeString()}.`):null);
+    if(!answerView&&['ready','takeover','preparing'].includes(record.status)){
+      container.replaceChildren(link('← All applications','#applications','quiet'),
+        el('div',{class:'row'},el('h1',{},record.title||`Application #${id}`),el('span',{},record.company||'')),liveContainer);
+      openBrowser().catch(error=>{browserOpen=false;liveContainer.replaceChildren(notice(error.message,'error'));});
+      return;
+    }
     const fields=el('div');
     const reviewLabels={previously_confirmed:'Previously confirmed',new_wording:'New wording—check mapping',ai_draft:'AI draft—review required',needs_answer:'Needs your answer'};
     for(const f of snapshot.fields||[]){
@@ -275,7 +288,7 @@ async function review(id) {
       fields.append(el('div',{class:'review-field'},badge(reviewLabels[provenance.status]||'Needs your answer',provenance.pending?'warning':''),el('p',{class:'hint'},provenance.source),draft,control,f.saved_answer_id?notice('Remembered answer — check it, then click Confirm answer.'):null,memoryControl,ready&&f.supported?button('Suggest answer with AI',async()=>{await send(`/applications/${id}/suggest`,'POST',{revision:record.revision,field_id:f.id});toast('Requesting a draft from your configured model…');},'quiet'):null,ready&&f.type==='combobox'?optionSearch:null,ready&&f.type==='combobox'?button('Find choices',async()=>{await send(`/applications/${id}/options`,'POST',{revision:record.revision,field_id:f.id,query:optionSearch.querySelector('input').value});toast('Reading available choices…');},'secondary'):null,ready&&f.supported?button((f.saved_answer_id||f.review?.pending)?'Confirm answer':'Update answer',async()=>{const value=['checkbox','radio'].includes(f.type)?input.checked:input.value;await send(`/applications/${id}/edit`,'POST',{revision:record.revision,field_id:f.id,value,remember:remember.checked,scope:scope.value});toast('Updating the live form…');},'secondary'):f.type==='file'?el('small',{class:'hint'},'This is the file uploaded to the employer form.'):!f.supported?el('small',{class:'hint'},'This custom control must be completed on the employer site.'):null));
     }
     const actions=el('div',{class:'actions'});
-    if(ready||['takeover','preparing'].includes(record.status))actions.append(button('Open live browser',async()=>{browserOpen=true;liveContainer.replaceChildren(await browserPanel(id,()=>{browserOpen=false;render();},record.status==='preparing'));},'secondary'));
+    if(ready||['takeover','preparing'].includes(record.status))actions.append(button('Open live browser',()=>{location.hash=`applications/${id}`;},'secondary'));
     if(record.status==='takeover')actions.append(button('Close without submitting',async()=>{await send(`/applications/${id}/cancel`,'POST');browserOpen=false;render();},'quiet'));
     if(ready){
       if(snapshot.can_back)actions.append(button('Previous page',async()=>{await send(`/applications/${id}/navigate`,'POST',{revision:record.revision,direction:'back'});},'secondary'));

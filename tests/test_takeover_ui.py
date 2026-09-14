@@ -50,12 +50,11 @@ def test_live_browser_login_and_resume_from_ui(tmp_path):
             job=page.request.post(base+'/jobs',data={'company':'Acme','title':'Engineer','location':'Remote','application_url':'https://careers.example.com/apply'}).json()
             run=page.request.post(base+f"/jobs/{job['id']}/prepare").json()
             page.goto(base+f"/#applications/{run['id']}")
-            page.get_by_role('button',name='Open live browser',exact=True).click()
+            assert page.get_by_role('button',name='Open live browser',exact=True).count()==0
             image=page.get_by_alt_text('Interactive server browser')
             image.wait_for()
             page.wait_for_function("() => document.querySelector('.live-browser').naturalWidth>0")
-            if page.get_by_role('button',name='Take control',exact=True).is_visible():
-                page.get_by_role('button',name='Take control',exact=True).click()
+            page.locator('.live-panel[data-mode=control]').wait_for()
             from pathlib import Path
             screenshots=Path('/tmp/apply-agent-takeover-ui');screenshots.mkdir(exist_ok=True)
             page.screenshot(path=str(screenshots/'desktop.png'),full_page=True)
@@ -84,7 +83,7 @@ def test_live_browser_login_and_resume_from_ui(tmp_path):
             page.get_by_text('Session saved for this application site for up to seven days.',exact=True).wait_for()
             page.get_by_role('button',name='Resume worker / review',exact=True).click()
             page.get_by_text('Preparation paused or ready. Take control or return to review.',exact=True).wait_for()
-            page.get_by_role('button',name='Return to review',exact=True).click()
+            page.get_by_role('button',name='Review answers & submit',exact=True).click()
             page.get_by_role('button',name='Review complete · Submit',exact=True).wait_for()
             response=page.request.get(base+f"/applications/{run['id']}").json()
             assert response['status']=='ready'

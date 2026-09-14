@@ -1,7 +1,7 @@
 'use strict';
 // Inputs run in order. Background refresh never overlaps an input request.
 async function browserPanel(id,onResume,watching=false) {
-  let current=null,busy=false,pending=0,chain=Promise.resolve(),generation=0,attached=false,attachAttempts=0;
+  let current=null,busy=false,pending=0,chain=Promise.resolve(),generation=0,attached=false,attachAttempts=0,autoControl=watching;
   const image=el('img',{alt:'Interactive server browser',class:'live-browser',tabindex:0,draggable:false});
   const url=el('p',{class:'source-url'}),message=el('div'),tabs=el('select',{'aria-label':'Browser tab'});
   const keyboard=el('textarea',{'aria-label':'Browser keyboard input',class:'browser-keyboard',autocomplete:'off',autocapitalize:'off',spellcheck:'false'});
@@ -14,8 +14,8 @@ async function browserPanel(id,onResume,watching=false) {
   panel.classList.add('live-panel');
   const controls=el('div');
   const takeControl=button('Take control',()=>enqueue('start'),'secondary');
-  const review=button('Return to review',onResume,'secondary');
-  function mode(){controls.hidden=watching;tabs.hidden=watching;takeControl.hidden=!watching;takeControl.disabled=watching&&busy;}
+  const review=button('Review answers & submit',()=>enqueue('review'),'secondary');
+  function mode(){panel.dataset.mode=watching?'watch':'control';controls.hidden=watching;tabs.hidden=watching;takeControl.hidden=!watching;takeControl.disabled=watching&&busy;}
   function draw(result){
     if(result.image)image.src='data:image/jpeg;base64,'+result.image;
     if(result.url)url.textContent=result.url;
@@ -29,6 +29,7 @@ async function browserPanel(id,onResume,watching=false) {
     busy=true;
     try{
       const result=await send(`/applications/${id}/browser`,'POST',{operation,token:current?.token||'',...extra});
+      if(result.resumed&&operation==='review'){generation++;onResume();return true;}
       if(result.resumed){watching=true;mode();message.replaceChildren(notice(result.message));return true;}
       if(operation==='start'){watching=false;mode();}
       draw(result);
@@ -96,7 +97,9 @@ async function browserPanel(id,onResume,watching=false) {
     else if(attached||attachAttempts++>20){generation++;clearTimeout(wheelTimer);return;}
     if(!document.hidden){
       if(watching){
-        try{const result=await api(`/applications/${id}/browser/frame`,{cache:'no-store'});draw(result);takeControl.disabled=busy||result.status==='preparing';message.replaceChildren(notice(result.status==='preparing'?'Worker is filling the application…':'Preparation paused or ready. Take control or return to review.'));}catch(error){message.replaceChildren(notice(error.message));}
+        try{const result=await api(`/applications/${id}/browser/frame`,{cache:'no-store'});draw(result);
+          if(autoControl&&!busy&&!pending&&['ready','takeover'].includes(result.status)){autoControl=false;await enqueue('start');}
+          takeControl.disabled=busy||result.status==='preparing';message.replaceChildren(notice(result.status==='preparing'?'Worker is filling the application…':'Preparation paused or ready. Take control or return to review.'));}catch(error){message.replaceChildren(notice(error.message));}
       }else if(!busy&&!pending)await enqueue('refresh');
     }
     setTimeout(tick,watching?150:250);

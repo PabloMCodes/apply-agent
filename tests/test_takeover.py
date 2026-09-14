@@ -313,3 +313,17 @@ def test_live_frame_endpoint_is_read_only_and_not_cacheable(workspace):
         store.set_run(path,app_id,'cancelled',{})
         assert client.get(f'/applications/{app_id}/browser/frame').status_code==409
         client.app.state.runtime=None
+
+
+def test_return_to_review_captures_manual_edits_without_filling_or_advancing(browser_page,workspace):
+    page=browser_page;path,app_id=workspace
+    page.set_content('<label>First name<input id=first></label><label>Last name<input id=last></label><button type=button>Submit application</button>')
+    worker,_=worker_for(path,app_id,page)
+    view=worker.control(app_id,{'operation':'start'})
+    page.locator('#first').fill('Manual edit')
+    result=worker.control(app_id,{'operation':'review','token':view['token']})
+    assert result['resumed']
+    record=store.get(path,app_id)
+    assert record['status']=='ready'
+    assert page.locator('#last').input_value()==''
+    assert any(f['value']=='Manual edit' for f in record['snapshot']['fields'])

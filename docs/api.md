@@ -159,3 +159,8 @@ implicit submission. Tokens remain stable across unchanged viewport layouts and
 are renewed when the layout changes. The UI serializes inputs and coalesces wheel
 and touch scrolling. It polls the passive frame endpoint while watching, and
 refreshes the interactive viewport automatically while idle.
+
+The application UI opens `/#applications/{id}` directly in the live browser.
+`#applications/{id}/answers` shows the recorded answer review. Browser operation
+`review` captures the current takeover page and returns it to ready status without
+autofill, navigation, or submission; login must be completed first.

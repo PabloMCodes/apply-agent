@@ -232,6 +232,8 @@ class BrowserWorker:
         if operation=='start':
             if record['status']=='ready':self.pause_for_takeover(app_id,'You control the browser. Resume preparation when finished.')
             return takeover.image_frame(entry)
+        if operation=='review' and record['status']=='ready':
+            return {'resumed':True,'message':'Ready for answer review.'}
         if record['status']!='takeover':raise ValueError('Open browser takeover before operating this page.')
         if operation!='refresh' and payload.get('token')!=entry.get('control_token'):
             raise ValueError('The browser view changed. Refresh before another action.')
@@ -271,6 +273,10 @@ class BrowserWorker:
             if takeover.login_page(page):raise ValueError('Finish signing in before saving this session.')
             self.vault.save(entry['entry_url'],entry['context'].storage_state(indexed_db=True))
             message='Session saved for this application site for up to seven days.'
+        elif operation=='review':
+            if takeover.login_page(page):raise ValueError('Finish signing in before reviewing application answers.')
+            store.set_run(self.path,app_id,'ready',self.capture(app_id,session),'Review your answers before submitting.')
+            return {'resumed':True,'message':'Ready for answer review.'}
         elif operation in ('resume','ai'):
             if takeover.login_page(page):raise ValueError('Finish signing in or verification before resuming.')
             if operation=='resume' and not getattr(session,'final_target',None):
