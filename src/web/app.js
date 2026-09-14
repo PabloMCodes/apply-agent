@@ -76,7 +76,7 @@ async function overview() {
   return el('div',{},hero,stats,el('div',{class:'grid'},setup,activity));
 }
 async function profile() {
-  const [data,resumes,ai,applicationFields,savedSessions]=await Promise.all([api('/profile').catch(()=>({})),api('/resumes'),api('/settings/ai'),api('/profile/fields'),api('/browser-sessions')]);
+  const [data,resumes,ai,applicationFields,savedSessions,memory]=await Promise.all([api('/profile').catch(()=>({})),api('/resumes'),api('/settings/ai'),api('/profile/fields'),api('/browser-sessions'),api('/saved-answers')]);
   const form=el('form');
   const fields=el('div',{class:'form-grid'},field('First name','first_name',data.first_name),field('Last name','last_name',data.last_name),field('Email address','email',data.email,'email'),field('Phone number','phone',data.phone,'tel'),field('City / location','location',data.location),field('LinkedIn URL','linkedin',data.linkedin),field('GitHub URL','github',data.github),field('Website or portfolio','website',data.website),field('Skills, separated by commas','skills',(data.skills||[]).join(', ')));
   const answers=el('div');
@@ -128,8 +128,18 @@ async function profile() {
   },'secondary');
   const aiForm=el('form',{},el('label',{class:'check-field'},el('input',{type:'checkbox',name:'enabled',checked:ai.enabled}),'Enable optional AI suggestions'),el('label',{class:'check-field'},el('input',{type:'checkbox',name:'browser_assistance',checked:ai.browser_assistance}),'Use AI field mapping during preparation (sends field labels and contact/professional facts)'),field('API base URL','base_url',ai.base_url||'','url','A Chat Completions compatible endpoint, including /v1 if needed. HTTP is allowed for localhost models.'),field('Model name','model',ai.model||''),field('API key','api_key','','password',ai.has_key?'A key is saved. Leave blank to keep it.':'Optional for local models.'),saveButton('Save AI connection'));
   formSubmit(aiForm,async f=>{await send('/settings/ai','PUT',{enabled:f.has('enabled'),browser_assistance:f.has('browser_assistance'),base_url:f.get('base_url'),model:f.get('model'),api_key:f.get('api_key')||null});aiForm.querySelector('[name=api_key]').value='';toast('AI connection saved.');});
+  const library=el('div');
+  function drawSavedAnswers(){
+    library.replaceChildren();
+    for(const answer of memory)library.append(el('div',{class:'review-field'},el('strong',{},answer.question),el('p',{},String(answer.value)),el('small',{},answer.company?`Only ${answer.company}`:'All companies'),button('Forget answer',async()=>{
+      await send(`/saved-answers/${answer.id}`,'DELETE');
+      memory.splice(memory.indexOf(answer),1);drawSavedAnswers();toast('Saved answer removed.');
+    },'quiet')));
+    if(!memory.length)library.append(el('p',{},'Choose “Remember this answer” while reviewing an application to add it to your profile.'));
+  }
+  drawSavedAnswers();
   const sessionList=el('div',{},el('h3',{},'Remembered site logins'),savedSessions.map(item=>el('div',{class:'review-field'},el('p',{},item.origin),el('small',{},'Expires '+date(item.expires_at)),button('Forget site login',async()=>{await send('/browser-sessions/forget','POST',{origin:item.origin});toast('Saved login removed. Existing open sessions remain active.');render();},'quiet'))));
-  return el('div',{},head('Your application profile.','Upload a resume to fill your details, then answer the common SWE application questions.'),el('div',{class:'grid'},card('Application details','Confirm your details before using autofill.',form),el('div',{},card('Your resumes','Titles and role keywords guide automatic selection. Ambiguous matches pause for your choice.',resumeList,title,roles,input,upload,info),card('Optional AI','Suggest answer sends saved skills, education and employment answers, and any previously saved professional notes to this provider. Voluntary self-identification and work eligibility answers are excluded. Drafts need your approval.',aiForm,sessionList,notice('This connection uses a provider API or local model. It does not sign into ChatGPT Plus.')))));
+  return el('div',{},head('Your application profile.','Upload a resume to fill your details, then answer the common SWE application questions.'),el('div',{class:'grid'},card('Application details','Confirm your details before using autofill.',form),el('div',{},card('Your resumes','Titles and role keywords guide automatic selection. Ambiguous matches pause for your choice.',resumeList,title,roles,input,upload,info),card('Saved answers','Answers remembered from application reviews. Reused answers require confirmation before submission.',library),card('Optional AI','Suggest answer sends saved skills, education and employment answers, and any previously saved professional notes to this provider. Voluntary self-identification and work eligibility answers are excluded. Drafts need your approval.',aiForm,sessionList,notice('This connection uses a provider API or local model. It does not sign into ChatGPT Plus.')))));
 }
 async function preferences() {
   const data=await api('/settings');
@@ -225,12 +235,6 @@ async function applications(id) {
   if(id)return review(Number(id));
   let offset=0;
   const items=await api('/applications?limit=50');
-  // An older running backend may still own an active review during an upgrade.
-  const memory=await api('/saved-answers').catch(()=>[]);
-  const library=el('div');
-  for(const answer of memory)library.append(el('div',{class:'review-field'},el('strong',{},answer.question),el('p',{},String(answer.value)),el('small',{},answer.company?`Only ${answer.company}`:'All companies'),button('Forget answer',async()=>{await send(`/saved-answers/${answer.id}`,'DELETE');render();},'quiet')));
-  if(!memory.length)library.append(el('p',{},'Choose Remember this answer while reviewing an application to save it here.'));
-
   const list=el('div'),pagination=el('div',{class:'pagination'});
   function paint(items){
     list.replaceChildren();
@@ -244,7 +248,7 @@ async function applications(id) {
   paint(items);
   const chooser=el('details',{},el('summary',{},'Add and select applications'),await jobs(true));
   pollTimer=setInterval(()=>refresh().catch(()=>{}),4000);
-  return el('div',{},head('A clear view of what’s next.','Queue any number of jobs. Review completed forms while the worker prepares the next ones.','YOUR WORKSPACE'),card('Your applications','Live review slots are configurable in Preferences. Status updates automatically.',list,pagination),chooser,card('Saved answers','Reused answers require confirmation before submission.',library));
+  return el('div',{},head('A clear view of what’s next.','Queue any number of jobs. Review completed forms while the worker prepares the next ones.','YOUR WORKSPACE'),card('Your applications','Live review slots are configurable in Preferences. Status updates automatically.',list,pagination),chooser);
 }
 async function review(id) {
   let record=await api(`/applications/${id}`);

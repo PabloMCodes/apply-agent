@@ -170,7 +170,7 @@ Only exact normalized question and control-type matches are reused; ambiguous fi
 consent checkboxes and radio buttons are excluded. Dropdown choices must still match.
 Use company scope for employer-specific answers. Every reused answer is marked and
 must be confirmed before submission, including sensitive or time-dependent answers.
-Manage or forget saved answers at the bottom of Applications. Forgetting an answer
+Manage or forget saved answers in **Profile & resume → Saved answers**. Forgetting an answer
 prevents future reuse; it does not erase a value already entered into a live form.
 Each application still requires its own final review and explicit submission.
 
