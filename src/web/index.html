@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f7f2"><title>Apply Agent · Your next chapter</title>
+  <link rel="stylesheet" href="/static/styles.css"><script src="/static/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#overview"><span class="brand-mark">a<span>↗</span></span><span>apply agent<span class="brand-caption">YOUR NEXT CHAPTER</span></span></a>
+    <span class="nav-label">YOUR WORKSPACE</span>
+    <nav aria-label="Main navigation">
+      <a href="#overview" data-page="overview"><span>◈</span> Overview</a>
+      <a href="#jobs" data-page="jobs"><span>⌕</span> Discover jobs</a>
+      <a href="#applications" data-page="applications"><span>▤</span> Applications</a>
+      <span class="nav-label">MAKE IT YOURS</span>
+      <a href="#profile" data-page="profile"><span>◎</span> Profile & resume</a>
+      <a href="#preferences" data-page="preferences"><span>☷</span> Preferences</a>
+      <a href="#sources" data-page="sources"><span>⊞</span> Job sources</a>
+      <a href="#telegram" data-page="telegram"><span>↗</span> Telegram</a>
+    </nav>
+    <div class="local-note"><span class="status-dot"></span> Your own workspace<p>Self-hosted. Your data stays in your installation.</p></div>
+  </aside>
+  <main>
+    <header class="topbar"><span>WORKSPACE <span class="slash">/</span> <span id="breadcrumb">Overview</span></span><span class="local-pill">● &nbsp; Personal edition</span></header>
+    <div id="content" class="content" aria-live="polite"></div>
+    <footer>Built for your next step. <span>You always make the final call.</span></footer>
+  </main>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="confirm-dialog"><div class="dialog-body"><span class="eyebrow">ONE LAST LOOK</span><h2>Submit this application?</h2><p>This sends the answers and resume you just reviewed to the employer. This action cannot be undone here.</p><p id="confirm-detail"></p><div class="actions"><button id="dismiss-submit" class="secondary">Keep reviewing</button><button id="confirm-submit" class="primary">Yes, submit application</button></div></div></dialog>
+</body>
+</html>

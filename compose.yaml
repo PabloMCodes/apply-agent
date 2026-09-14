@@ -1,0 +1,23 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      DATABASE_PATH: /app/data/jobs.sqlite3
+      APPLY_AGENT_HOSTS: ${APPLY_AGENT_HOSTS:-}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - agent-data:/app/data
+    shm_size: 1gb
+    stop_grace_period: 3m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  agent-data:
