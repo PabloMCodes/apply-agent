@@ -462,6 +462,9 @@ class BrowserWorker:
             while not self.stop.is_set():
                 try:
                     for app_id, value in list(self.sessions.items()):
+                        if store.get(self.path, app_id).get('job_status') == 'applied':
+                            self.close(app_id)
+                            continue
                         if not any(not p.is_closed() for p in value.get('pages',value['context'].pages)):
                             previous=store.get(self.path,app_id)
                             self.close(app_id)

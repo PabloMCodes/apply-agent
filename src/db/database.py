@@ -49,6 +49,19 @@ def initialize_database(db_path: Path = DATABASE_PATH) -> None:
                 id INTEGER PRIMARY KEY CHECK(id = 1), content TEXT NOT NULL
             );
         """)
+        columns = {row['name'] for row in connection.execute('PRAGMA table_info(jobs)')}
+        if 'applied_at' not in columns:
+            connection.execute('ALTER TABLE jobs ADD COLUMN applied_at TEXT')
+        # All submission paths use the same timestamp rule. Old applied records
+        # keep an unknown date rather than inventing a submission time.
+        connection.executescript('''
+            CREATE TRIGGER IF NOT EXISTS jobs_applied_date
+            AFTER UPDATE OF status ON jobs WHEN OLD.status != NEW.status
+            BEGIN
+                UPDATE jobs SET applied_at = CASE WHEN NEW.status = 'applied'
+                    THEN CURRENT_TIMESTAMP ELSE NULL END WHERE id = NEW.id;
+            END;
+        ''')
 
 
 def _save_jobs(connection, jobs: list[Job]) -> tuple[int, int]:
@@ -118,11 +131,20 @@ def create_job(job: Job, db_path: Path):
 
 def update_tracking(job_id: int, status: str, notes: str, db_path: Path):
     with connect(db_path) as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        previous = connection.execute('SELECT status FROM jobs WHERE id=?', (job_id,)).fetchone()
         connection.execute(
             'UPDATE jobs SET status=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
             (status, notes, job_id),
         )
         row = connection.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+        # Undo must permit a fresh run instead of reopening an already closed tab.
+        if previous and previous['status'] == 'applied' and status != 'applied':
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE name='application_runs'").fetchone():
+                connection.execute("""UPDATE application_runs SET status='cancelled',
+                    message='Applied mark removed. Prepare again to open a fresh tab.', revision=revision+1
+                    WHERE id IN (SELECT id FROM application_queue WHERE application_url=?)""",
+                    (row['application_url'],))
         return dict(row) if row else None
 
 

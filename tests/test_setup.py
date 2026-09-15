@@ -211,3 +211,56 @@ def test_saved_select_matches_label_not_provider_value(workspace):
     fake.edit.assert_called_once_with('0:f1','99')
     fake.snapshot.return_value = {'fields':[dict(field,value='',options=[{'label':'Onsite','value':'1'}])]}
     assert answers.apply(path, fake, 'Other') == {}
+
+
+def test_applied_history_survives_closed_tab_import_and_restart(workspace):
+    from src.db import database as db
+    client, path = workspace
+    job = client.post('/jobs', json={'company':'Acme','title':'Engineer','location':'Remote','application_url':'https://example.com/jobs/track'}).json()
+    app_id = apps.queue_job(path, job['id'])
+    apps.set_run(path, app_id, 'needs_attention', message='Browser closed')
+    assert client.get(f'/jobs/{job["id"]}').json()['applied_at'] is None
+    marked = client.put(f'/jobs/{job["id"]}/tracking', json={'status':'applied','notes':'Confirmed on employer site'}).json()
+    assert marked['applied_at']
+    assert client.get(f'/applications/{app_id}').json()['status'] == 'submitted'
+    assert client.get('/applications?active_only=true').json() == []
+    assert client.get('/jobs?status=applied&q=Acme').json()['total'] == 1
+    with pytest.raises(ValueError, match='applied'):
+        apps.queue_job(path, job['id'])
+    db.save_jobs([Job('Acme','Engineer','Remote',job['application_url'],'test')],path)
+    apps.set_run(path, app_id, 'ready')  # A late worker update cannot erase history.
+    db.initialize_database(path)
+    again = client.get(f'/jobs/{job["id"]}').json()
+    assert again['status'] == 'applied'
+    assert again['applied_at'] == marked['applied_at']
+    assert again['notes'] == marked['notes']
+    client.put(f'/jobs/{job["id"]}/tracking', json={'status':'new'})
+    assert client.get(f'/jobs/{job["id"]}').json()['applied_at'] is None
+    assert client.get(f'/applications/{app_id}').json()['status'] == 'cancelled'
+    assert apps.queue_job(path, job['id']) == app_id
+    assert apps.get(path, app_id)['status'] == 'queued'
+
+
+def test_only_confirmed_submission_sets_applied_date(workspace):
+    client, path = workspace
+    job = client.post('/jobs', json={'company':'Acme','title':'Engineer','location':'Remote','application_url':'https://example.com/jobs/confirm'}).json()
+    app_id = apps.queue_job(path, job['id'])
+    apps.set_run(path, app_id, 'submission_unknown')
+    assert client.get('/jobs?status=applied').json()['total'] == 0
+    apps.set_run(path, app_id, 'submitted')
+    first = client.get(f'/jobs/{job["id"]}').json()
+    assert first['applied_at']
+    apps.set_run(path, app_id, 'submitted')
+    assert client.get(f'/jobs/{job["id"]}').json()['applied_at'] == first['applied_at']
+
+
+def test_legacy_applied_dates_remain_unknown(tmp_path):
+    import sqlite3
+    from src.db import database as db
+    path = tmp_path / 'old.sqlite3'
+    with sqlite3.connect(path) as conn:
+        conn.execute('CREATE TABLE jobs (id INTEGER PRIMARY KEY, status TEXT)')
+        conn.execute("INSERT INTO jobs VALUES (1,'applied')")
+    db.initialize_database(path)
+    with db.connect(path) as conn:
+        assert conn.execute('SELECT applied_at FROM jobs').fetchone()[0] is None

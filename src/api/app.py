@@ -89,9 +89,9 @@ def create_app(db_path: Path = db.DATABASE_PATH, start_workers: bool = False) ->
         return [{'id': key, 'url': url} for key, url in SOURCES.items()]
 
     @app.get('/applications', tags=['Applications'])
-    def applications(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
+    def applications(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0), active_only: bool = False):
         """Approved applications and their browser preparation/review status."""
-        return application_store.list_runs(db_path, limit, offset)
+        return application_store.list_runs(db_path, limit, offset, active_only)
 
     @app.post('/ingestions', response_model=IngestionOutput, status_code=201, tags=['Ingestion'])
     def ingest(body: IngestionInput):

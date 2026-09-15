@@ -91,6 +91,20 @@ def test_setup_interface_desktop_and_phone(tmp_path):
             page.get_by_role('button',name='Select all matching jobs',exact=True).click()
             page.get_by_role('button',name='Prepare selected (5)',exact=True).wait_for()
             assert page.get_by_role('heading',name='Saved answers',exact=True).count()==0
+            page.on('dialog',lambda dialog:dialog.accept())
+            page.locator('.application-item').first.get_by_role('button',name='Mark applied',exact=True).click()
+            page.get_by_role('status').filter(has_text='Recorded in Applied history.').wait_for()
+            page.get_by_role('link',name='Applied history',exact=False).first.click()
+            page.get_by_role('heading',name='Your applied jobs.',exact=True).wait_for()
+            assert page.locator('.application-item').count()==1
+            assert 'Date not recorded' not in page.locator('.application-item').inner_text()
+            page.get_by_label('Search applied jobs',exact=True).fill('Nonexistent')
+            page.get_by_role('button',name='Search',exact=True).click()
+            page.get_by_text('0 applied jobs',exact=True).wait_for()
+            page.get_by_label('Search applied jobs',exact=True).fill('Acme')
+            page.get_by_role('button',name='Search',exact=True).click()
+            page.get_by_role('button',name='Undo applied',exact=True).click()
+            page.get_by_text('0 applied jobs',exact=True).wait_for()
             page.get_by_role('link',name='Profile & resume',exact=False).click()
             page.get_by_role('heading',name='Saved answers',exact=True).wait_for()
 

@@ -1,6 +1,6 @@
 'use strict';
 const root = document.querySelector('#content');
-const titles = {overview:'Overview',profile:'Profile & resume',preferences:'Preferences',sources:'Job sources',telegram:'Telegram',jobs:'Discover jobs',applications:'Applications'};
+const titles = {overview:'Overview',profile:'Profile & resume',preferences:'Preferences',sources:'Job sources',telegram:'Telegram',jobs:'Discover jobs',applications:'Applications',applied:'Applied history'};
 let routeVersion = 0, pollTimer, toastTimer, pendingSubmit = null;
 function el(tag, attrs={}, ...children) {
   const node = document.createElement(tag);
@@ -61,7 +61,7 @@ async function render() {
   document.querySelector('#breadcrumb').textContent=titles[page]||'Overview';
   document.querySelectorAll('[data-page]').forEach(a=>a.setAttribute('aria-current',a.dataset.page===page?'page':'false'));
   root.replaceChildren(el('div',{class:'loading'},'Opening your workspace…'));
-  try { const content=await ({overview,profile,preferences,sources,telegram,jobs,applications}[page]||overview)(id);if(version===routeVersion)root.replaceChildren(content); }
+  try { const content=await ({overview,profile,preferences,sources,telegram,jobs,applications,applied}[page]||overview)(id);if(version===routeVersion)root.replaceChildren(content); }
   catch(error){if(version===routeVersion)root.replaceChildren(head('Let’s try that again.',error.message),button('Reload',render));}
 }
 async function overview() {
@@ -199,12 +199,14 @@ async function jobs(embedded=false) {
     listing.replaceChildren();
     for(const item of result.items){
       const supported=item.application_url.startsWith('https://');
+      if(['applied','skipped'].includes(item.status))selected.delete(item.id);
       const pick=el('input',{type:'checkbox',checked:selected.has(item.id),'aria-label':`Select ${item.title} at ${item.company}`});
       pick.disabled=!supported||['applied','skipped'].includes(item.status);
       pick.addEventListener('change',()=>{if(pick.checked)selected.add(item.id);else selected.delete(item.id);bulk.textContent=`Prepare selected (${selected.size})`;bulk.disabled=!selected.size;});
-      listing.append(el('article',{class:'job-item'},el('label',{class:'check-field'},pick,'Select for preparation'),el('div',{class:'row'},el('div',{},el('h3',{},item.title),el('div',{class:'item-meta'},`${item.company} · ${item.location}`)),badge(item.status)),el('div',{class:'item-actions'},supported?button('Prepare application',async()=>{const run=await send(`/jobs/${item.id}/prepare`,'POST');location.hash=`applications/${run.id}`;},'secondary'):badge('Use an HTTPS application link','warning'),external('Open original ↗',item.application_url),button(item.status==='skipped'?'Unskip':'Skip',async()=>{await send(`/jobs/${item.id}/tracking`,'PUT',{status:item.status==='skipped'?'new':'skipped',notes:item.notes});load();},'quiet'))));
+      listing.append(el('article',{class:'job-item'},el('label',{class:'check-field'},pick,'Select for preparation'),el('div',{class:'row'},el('div',{},el('h3',{},item.title),el('div',{class:'item-meta'},`${item.company} · ${item.location}`)),badge(item.status)),el('div',{class:'item-actions'},supported&&!['applied','skipped'].includes(item.status)?button('Prepare application',async()=>{const run=await send(`/jobs/${item.id}/prepare`,'POST');location.hash=`applications/${run.id}`;},'secondary'):(!supported?badge('Use an HTTPS application link','warning'):null),external('Open original ↗',item.application_url),trackingButton(item.id,item.status,load),item.status==='applied'?null:button(item.status==='skipped'?'Unskip':'Skip',async()=>{await send(`/jobs/${item.id}/tracking`,'PUT',{status:item.status==='skipped'?'new':'skipped',notes:item.notes});load();},'quiet'))));
     }
     if(!result.items.length)listing.append(empty('Your next opportunity starts here.','Add a source and check it to discover jobs, or save a job manually.',link('Add a source','#sources')));
+    bulk.textContent=`Prepare selected (${selected.size})`;bulk.disabled=!selected.size;
     const previous=button('← Previous',async()=>{offset=Math.max(0,offset-25);load();},'secondary');previous.disabled=offset===0;
     const next=button('Next →',async()=>{offset+=25;load();},'secondary');next.disabled=offset+25>=result.total;
     pagination.replaceChildren(previous,el('span',{},`${result.total} jobs · ${result.total?offset+1:0}–${Math.min(offset+25,result.total)}`),next);
@@ -231,24 +233,55 @@ async function jobs(embedded=false) {
   await load();
   return el('div',{},embedded?null:head('Room for your next opportunity.','Every occupation is welcome. Browse your imported jobs or save a link yourself.','YOUR WORKSPACE'),el('div',{class:'filter-row'},query,status,search,selectAll,button('Clear selection',async()=>{selected.clear();bulk.textContent='Prepare selected (0)';bulk.disabled=true;await load();},'quiet')),resumeChoice,bulk,card('Your jobs','',listing,pagination),card('Found something elsewhere?','Save any job here. Prepare application will detect its form and try supported fields, without submitting.',manual),card('Import many jobs','Paste hundreds of listings. Nothing is prepared until you select it.',importField,importButton));
 }
+function trackingButton(jobId,status,refresh) {
+  const applied=status==='applied';
+  return button(applied?'Undo applied':'Mark applied',async()=>{
+    if(!confirm(applied?'Remove the applied mark? This does not withdraw your employer application.':'Have you submitted this application? This records it as applied and closes its worker tab; it does not submit the form.'))return;
+    const job=await api(`/jobs/${jobId}`);
+    await send(`/jobs/${jobId}/tracking`,'PUT',{status:applied?'new':'applied',notes:job.notes});
+    toast(applied?'Applied mark removed.':'Recorded in Applied history.');
+    await refresh();
+  },'secondary');
+}
+function appliedDate(value) {
+  return value?new Date(value.replace(' ','T')+'Z').toLocaleString():'Date not recorded';
+}
+async function applied() {
+  let offset=0;
+  const list=el('div'),pagination=el('div',{class:'pagination'});
+  const query=el('input',{type:'search',placeholder:'Search applied jobs…','aria-label':'Search applied jobs'});
+  async function load(){
+    const result=await api(`/jobs?status=applied&limit=25&offset=${offset}&q=${encodeURIComponent(query.value)}`);
+    list.replaceChildren();
+    for(const item of result.items)list.append(el('article',{class:'application-item'},el('h3',{},item.title),el('p',{},`${item.company} · ${item.location}`),badge('Applied'),el('p',{},`Recorded: ${appliedDate(item.applied_at)}`),external('Employer listing ↗',item.application_url),trackingButton(item.id,item.status,load)));
+    if(!result.items.length)list.append(notice('No applied jobs match. After submitting on the employer site, choose Mark applied on your application or job.'));
+    const prev=button('Previous',async()=>{offset=Math.max(0,offset-25);await load();},'secondary');prev.disabled=offset===0;
+    const next=button('Next',async()=>{offset+=25;await load();},'secondary');next.disabled=offset+25>=result.total;
+    pagination.replaceChildren(prev,el('span',{},`${result.total} applied jobs`),next);
+  }
+  const search=button('Search',async()=>{offset=0;await load();},'secondary');
+  query.addEventListener('keydown',event=>{if(event.key==='Enter')search.click();});
+  await load();
+  return el('div',{},head('Your applied jobs.','Applications you marked as submitted, plus submissions confirmed by the worker. Dates show when Apply Agent recorded them.','YOUR HISTORY'),link('← Applications','#applications'),el('div',{class:'filter-row'},query,search),card('Applied history','Applied jobs are excluded from preparation, even when the same link is imported again.',list,pagination));
+}
 async function applications(id) {
   if(id)return review(Number(id));
   let offset=0;
-  const items=await api('/applications?limit=50');
+  const items=await api('/applications?limit=50&active_only=true');
   const list=el('div'),pagination=el('div',{class:'pagination'});
   function paint(items){
     list.replaceChildren();
-    for(const item of items)list.append(el('article',{class:'application-item'},el('div',{class:'row'},el('div',{},el('h3',{},link(item.title||`Application #${item.id}`,`#applications/${item.id}`,'')),el('div',{class:'item-meta'},item.company||item.application_url)),badge(item.status)),link(item.status==='ready'?'Open application →':'View application →',`#applications/${item.id}`,'secondary')));
+    for(const item of items)list.append(el('article',{class:'application-item'},el('div',{class:'row'},el('div',{},el('h3',{},link(item.title||`Application #${item.id}`,`#applications/${item.id}`,'')),el('div',{class:'item-meta'},item.company||item.application_url)),badge(item.status)),link(item.status==='ready'?'Open application →':'View application →',`#applications/${item.id}`,'secondary'),item.job_id?trackingButton(item.job_id,item.job_status,refresh):null));
     if(!items.length)list.append(empty('You make the first move.','Select jobs below to fill your queue.'));
     const prev=button('Previous runs',async()=>{offset=Math.max(0,offset-50);await refresh();},'secondary');prev.disabled=offset===0;
     const next=button('More runs',async()=>{offset+=50;await refresh();},'secondary');next.disabled=items.length<50;
     pagination.replaceChildren(prev,el('span',{},`Runs ${offset+1}–${offset+items.length}`),next);
   }
-  async function refresh(){paint(await api(`/applications?limit=50&offset=${offset}`));}
+  async function refresh(){paint(await api(`/applications?limit=50&offset=${offset}&active_only=true`));}
   paint(items);
   const chooser=el('details',{},el('summary',{},'Add and select applications'),await jobs(true));
   pollTimer=setInterval(()=>refresh().catch(()=>{}),4000);
-  return el('div',{},head('A clear view of what’s next.','Queue any number of jobs. Review completed forms while the worker prepares the next ones.','YOUR WORKSPACE'),card('Your applications','Live review slots are configurable in Preferences. Status updates automatically.',list,pagination),chooser);
+  return el('div',{},head('A clear view of what’s next.','Queue any number of jobs. Review completed forms while the worker prepares the next ones.','YOUR WORKSPACE'),link('Applied history →','#applied'),card('Your applications','Live review slots are configurable in Preferences. Status updates automatically.',list,pagination),chooser);
 }
 async function review(id) {
   let record=await api(`/applications/${id}`);
@@ -287,7 +320,7 @@ async function review(id) {
       const draft=provenance.draft?el('div',{},notice('Suggested answer: '+provenance.draft),provenance.evidence?el('pre',{},JSON.stringify(provenance.evidence,null,2)):null,button('Copy draft to answer',()=>{if(f.type==='select'){const choice=f.options.find(o=>o.label===provenance.draft);if(choice)input.value=choice.value;}else input.value=provenance.draft;},'secondary')):null;
       fields.append(el('div',{class:'review-field'},badge(reviewLabels[provenance.status]||'Needs your answer',provenance.pending?'warning':''),el('p',{class:'hint'},provenance.source),draft,control,f.saved_answer_id?notice('Remembered answer — check it, then click Confirm answer.'):null,memoryControl,ready&&f.supported?button('Suggest answer with AI',async()=>{await send(`/applications/${id}/suggest`,'POST',{revision:record.revision,field_id:f.id});toast('Requesting a draft from your configured model…');},'quiet'):null,ready&&f.type==='combobox'?optionSearch:null,ready&&f.type==='combobox'?button('Find choices',async()=>{await send(`/applications/${id}/options`,'POST',{revision:record.revision,field_id:f.id,query:optionSearch.querySelector('input').value});toast('Reading available choices…');},'secondary'):null,ready&&f.supported?button((f.saved_answer_id||f.review?.pending)?'Confirm answer':'Update answer',async()=>{const value=['checkbox','radio'].includes(f.type)?input.checked:input.value;await send(`/applications/${id}/edit`,'POST',{revision:record.revision,field_id:f.id,value,remember:remember.checked,scope:scope.value});toast('Updating the live form…');},'secondary'):f.type==='file'?el('small',{class:'hint'},'This is the file uploaded to the employer form.'):!f.supported?el('small',{class:'hint'},'This custom control must be completed on the employer site.'):null));
     }
-    const actions=el('div',{class:'actions'});
+    const actions=el('div',{class:'actions'},record.job_id?trackingButton(record.job_id,record.job_status,()=>render()):null);
     if(ready||['takeover','preparing'].includes(record.status))actions.append(button('Open live browser',()=>{location.hash=`applications/${id}`;},'secondary'));
     if(record.status==='takeover')actions.append(button('Close without submitting',async()=>{await send(`/applications/${id}/cancel`,'POST');browserOpen=false;render();},'quiet'));
     if(ready){
@@ -304,7 +337,7 @@ async function review(id) {
     container.replaceChildren(...[link('← All applications','#applications','quiet'),head(record.title||`Application #${id}`,record.company||'Review the application before deciding.','YOUR REVIEW'),banner,snapshot.ai_message?notice(snapshot.ai_message):null,snapshot.resume?external('Download the resume used in this application',`/applications/${id}/resume/file`):null,notice(`Page ${snapshot.page_number||1}${snapshot.resume?' · Resume: '+snapshot.resume.title+' · '+snapshot.resume.reason:''}`),blockers,reviewBody,card('Other pages','Recorded values from visited pages. Use Previous page to edit employer fields.',history),actions,liveContainer].filter(node=>node!=null));
   }
   paint();
-  pollTimer=setInterval(async()=>{try{const next=await api(`/applications/${id}`);if(next.revision!==record.revision||next.status!==record.status){record=next;if(!['ready','takeover','preparing'].includes(record.status)){browserOpen=false;liveContainer.replaceChildren();}if(!browserOpen)paint();else{const banner=container.querySelector('.review-banner');if(banner)banner.replaceChildren(el('div',{class:'row'},el('h3',{},record.message||'Live browser'),badge(record.status)));}}}catch{}},2000);
+  pollTimer=setInterval(async()=>{try{const next=await api(`/applications/${id}`);if(next.revision!==record.revision||next.status!==record.status||next.job_status!==record.job_status){record=next;if(!['ready','takeover','preparing'].includes(record.status)){browserOpen=false;liveContainer.replaceChildren();}if(!browserOpen)paint();else{const banner=container.querySelector('.review-banner');if(banner)banner.replaceChildren(el('div',{class:'row'},el('h3',{},record.message||'Live browser'),badge(record.status)));}}}catch{}},2000);
   return container;
 }
 document.querySelector('#dismiss-submit').addEventListener('click',()=>{pendingSubmit=null;document.querySelector('#confirm-dialog').close();});

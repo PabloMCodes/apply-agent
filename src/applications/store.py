@@ -68,19 +68,23 @@ def get(path, app_id):
         row = conn.execute('''SELECT q.id,q.application_url,q.created_at,
             COALESCE(r.status, 'queued') AS status, COALESCE(r.revision,0) AS revision,
             COALESCE(r.snapshot,'{}') AS snapshot, COALESCE(r.message,'') AS message,
-            j.company,j.title,j.status AS job_status FROM application_queue q
+            j.id AS job_id,j.company,j.title,j.status AS job_status,j.applied_at FROM application_queue q
             LEFT JOIN application_runs r ON r.id=q.id
             LEFT JOIN jobs j ON j.application_url=q.application_url WHERE q.id=?''', (app_id,)).fetchone()
         if not row:
             return None
         result = dict(row)
+        if result['job_status'] == 'applied' and result['status'] != 'submitted':
+            result['status'] = 'submitted'
+            result['message'] = 'Recorded as applied. This job is excluded from preparation.'
         result['snapshot'] = json.loads(result['snapshot'])
         return result
 
 
-def list_runs(path, limit=50, offset=0):
+def list_runs(path, limit=50, offset=0, active_only=False):
     with connect(path) as conn:
-        ids = [row['id'] for row in conn.execute('SELECT id FROM application_queue ORDER BY id DESC LIMIT ? OFFSET ?', (limit, offset))]
+        where = "WHERE NOT EXISTS (SELECT 1 FROM jobs j WHERE j.application_url=q.application_url AND j.status='applied')" if active_only else ''
+        ids = [row['id'] for row in conn.execute(f'SELECT q.id FROM application_queue q {where} ORDER BY q.id DESC LIMIT ? OFFSET ?', (limit, offset))]
     return [get(path, app_id) for app_id in ids]
 
 
@@ -93,7 +97,7 @@ def set_run(path, app_id, status, snapshot=None, message='', notify=False):
             updated_at=excluded.updated_at,revision=application_runs.revision+1''',
             (app_id, status, json.dumps(snapshot or {}), message, time.time()))
         if status in ('ready', 'submitted'):
-            conn.execute('UPDATE jobs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE application_url=(SELECT application_url FROM application_queue WHERE id=?)',
+            conn.execute("UPDATE jobs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE status != 'applied' AND application_url=(SELECT application_url FROM application_queue WHERE id=?)",
                          ('applied' if status == 'submitted' else 'ready_for_review', app_id))
         if notify:
             revision = conn.execute('SELECT revision FROM application_runs WHERE id=?', (app_id,)).fetchone()[0]

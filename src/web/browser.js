@@ -121,6 +121,13 @@ async function nativeBrowserPanel(id,onReview,preparing){
     if(busy)return;
     busy=true;
     try{
+      if(operation==='native_submitted'){
+        if(!confirm('Have you submitted on the employer site? This records the application as applied and closes its worker tab.'))return;
+        const record=await api(`/applications/${id}`);
+        const job=await api(`/jobs/${record.job_id}`);
+        await send(`/jobs/${job.id}/tracking`,'PUT',{status:'applied',notes:job.notes});
+        ended=true;toast('Recorded in Applied history.');location.hash='applied';return;
+      }
       const result=await send(`/applications/${id}/browser`,'POST',{operation});
       if(result.submitted){ended=true;toast(result.message);location.hash='applications';return;}
       if(result.resumed&&operation==='review'){ended=true;onReview();return;}

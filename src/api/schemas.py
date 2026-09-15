@@ -24,6 +24,7 @@ class JobOutput(JobInput):
     notes: str
     created_at: str
     updated_at: str
+    applied_at: str | None = None
 
 
 class JobPage(BaseModel):

@@ -329,3 +329,19 @@ Implementation references: [Playwright authentication](https://playwright.dev/py
 Live viewport implementation reference: [Playwright CDP sessions](https://playwright.dev/python/docs/api/class-cdpsession).
 
 Native browser reference: [Playwright visible browser launch](https://playwright.dev/python/docs/library).
+
+### Tracking applications you submitted
+
+After submitting in the employer tab, choose **I submitted this application**,
+or **Mark applied** in the Applications / Discover jobs lists. Marking works even
+if the tab is closed; it records your confirmation and closes any remaining worker
+tab for that job. It never submits a form. Closing a tab or an uncertain submission
+result does not count as applied.
+
+**Applied history** in the sidebar lists submitted jobs, with search and the time
+Apply Agent recorded them. Confirmed worker submissions appear there too. Existing
+applied jobs without a known date show “Date not recorded.” Applied jobs are excluded
+from preparation and keep their status when the exact same application URL is
+imported again. Different URLs for the same opening are not automatically merged.
+Use **Undo applied** to correct a mistake; this does not withdraw an application
+from the employer. You can then prepare a fresh tab.
