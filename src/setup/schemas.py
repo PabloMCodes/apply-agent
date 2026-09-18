@@ -109,3 +109,7 @@ class BrowserControl(InputModel):
 
 class ForgetSession(InputModel):
     origin: HttpUrl
+
+
+class JobLinkInput(InputModel):
+    application_url: HttpUrl = Field(max_length=2000)

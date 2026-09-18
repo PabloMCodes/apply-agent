@@ -13,7 +13,7 @@ from src.api.app import create_app
 pytestmark = pytest.mark.skipif(os.environ.get('RUN_BROWSER_TESTS') != '1', reason='Set RUN_BROWSER_TESTS=1 with Chromium installed.')
 
 
-def test_setup_interface_desktop_and_phone(tmp_path):
+def test_setup_interface_desktop_and_phone(tmp_path, monkeypatch):
     from playwright.sync_api import sync_playwright
     with socket.socket() as socket_:
         socket_.bind(('127.0.0.1',0))
@@ -34,6 +34,22 @@ def test_setup_interface_desktop_and_phone(tmp_path):
             base=f'http://127.0.0.1:{port}'
             page.goto(base)
             page.get_by_role('heading',name='Your next chapter, with a little help.').wait_for()
+            from src.jobs.models import Job
+            from src.jobs import link_import
+            monkeypatch.setattr(link_import,'from_link',lambda url:(Job('Link Company','Imported Designer','Austin, TX',url,url),[]))
+            page.goto(base+'/#jobs')
+            page.get_by_label('Application link',exact=True).fill('https://example.com/link-job')
+            page.get_by_role('button',name='Add application',exact=True).click()
+            page.get_by_role('heading',name='Imported Designer',exact=True).wait_for()
+            assert page.get_by_label('Company',exact=True).count()==0
+            page.get_by_label('Application links (one per line)',exact=True).fill('https://example.com/link-job\nhttps://example.com/link-job-2')
+            page.get_by_role('button',name='Import links',exact=True).click()
+            page.get_by_text('Processed 2 of 2 links.',exact=True).wait_for()
+            imported=page.request.get(base+'/jobs?q=Link%20Company').json()['items']
+            assert len(imported)==2
+            assert all(job['location']=='Austin, TX' for job in imported)
+            for job in imported:
+                page.request.delete(base+f'/jobs/{job["id"]}')
             page.get_by_role('link',name='Profile & resume',exact=False).click()
             page.get_by_label('First name',exact=True).fill('Jordan')
             page.get_by_label('Last name',exact=True).fill('Taylor')

@@ -345,3 +345,20 @@ from preparation and keep their status when the exact same application URL is
 imported again. Different URLs for the same opening are not automatically merged.
 Use **Undo applied** to correct a mistake; this does not withdraw an application
 from the employer. You can then prepare a fresh tab.
+
+
+### Add applications with only a link
+
+In **Discover jobs**, or **Applications → Add and select applications**, paste the
+application URL and choose **Add application**. Company, title, and location are
+read from the public listing without an AI model. To add many jobs, paste one
+HTTPS link per line and choose **Import links**. Progress and per-link results
+are shown; a failed link does not stop the remaining imports.
+
+Greenhouse and CareerPuck links use their public job metadata. Other sites use
+JobPosting structured data and page headings/metadata. Login-only, blocked, and
+JavaScript-only pages may not expose details: the link is still saved with explicit
+fallbacks and a message about missing information. A missing location means
+“Not specified”, never an assumed remote role. Importing an already saved exact
+URL preserves its details and applied status. Adding links does not fill or submit
+applications; select the jobs you want prepared afterward.

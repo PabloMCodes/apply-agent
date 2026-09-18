@@ -212,9 +212,20 @@ async function jobs(embedded=false) {
     pagination.replaceChildren(previous,el('span',{},`${result.total} jobs · ${result.total?offset+1:0}–${Math.min(offset+25,result.total)}`),next);
   }
   query.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();search.click();}});
-  const manual=el('form',{},el('div',{class:'form-grid'},field('Company','company'),field('Job title','title'),field('Location','location'),field('Application URL','application_url','','url')),el('div',{class:'actions'},saveButton('Save job')));
-  manual.querySelectorAll('input').forEach(i=>i.required=true);
-  formSubmit(manual,async f=>{await send('/jobs','POST',Object.fromEntries(f));manual.reset();toast('Job saved.');load();});
+  const importResults=el('div',{'aria-live':'polite'});
+  const manual=el('form',{},field('Application link','application_url','','url','Paste the employer application URL. We will look up the details.'),saveButton('Add application'));
+  manual.querySelector('input').required=true;
+  function showImport(result){
+    const job=result.job;
+    importResults.append(notice(`${result.created?'Added':'Already saved'}: ${job.title} — ${job.company} · ${job.location}${result.warnings.length?' · '+result.warnings.join(' '):''}`));
+  }
+  formSubmit(manual,async f=>{
+    importResults.replaceChildren(notice('Reading the listing…'));
+    try{
+      const result=await send('/jobs/from-link','POST',{application_url:f.get('application_url')});
+      importResults.replaceChildren();showImport(result);manual.reset();await load();
+    }catch(error){importResults.replaceChildren(notice(error.message,'error'));throw error;}
+  });
   const selectAll=button('Select all matching jobs',async()=>{
     let cursor=0;
     while(true){const result=await api(`/jobs?limit=200&offset=${cursor}&q=${encodeURIComponent(query.value)}${status.value?'&status='+status.value:''}`);
@@ -223,15 +234,27 @@ async function jobs(embedded=false) {
     }
     bulk.textContent=`Prepare selected (${selected.size})`;bulk.disabled=!selected.size;await load();
   },'secondary');
-  const importField=field('Paste jobs (one per line)','bulk-jobs','','textarea','Company | Title | Location | HTTPS application URL');
-  const importButton=button('Import jobs',async()=>{
-    const rows=importField.querySelector('textarea').value.split('\n').filter(s=>s.trim()).map(line=>{const parts=line.split('|').map(s=>s.trim());if(parts.length!==4)throw new Error('Each line needs Company | Title | Location | URL.');return {company:parts[0],title:parts[1],location:parts[2],application_url:parts[3]};});
-    if(!rows.length)throw new Error('Paste at least one job.');
-    for(let i=0;i<rows.length;i+=500)await send('/jobs/bulk','POST',{jobs:rows.slice(i,i+500)});
-    toast(`Saved ${rows.length} jobs.`);await load();
+  const importField=field('Application links (one per line)','bulk-jobs','','textarea','Paste only the HTTPS links — no company, title, or location needed.');
+  const importButton=button('Import links',async()=>{
+    const urls=[...new Set(importField.querySelector('textarea').value.split('\n').map(s=>s.trim()).filter(Boolean))];
+    if(!urls.length)throw new Error('Paste at least one application link.');
+    importResults.replaceChildren();
+    let cursor=0,finished=0;
+    const progress=el('p');importResults.append(progress);
+    // Three requests at a time keeps large batches responsive without flooding sites.
+    async function importNext(){
+      while(cursor<urls.length){
+        const url=urls[cursor++];
+        try{showImport(await send('/jobs/from-link','POST',{application_url:url}));}
+        catch(error){importResults.append(notice(`${url}: ${error.message}`,'error'));}
+        finished++;progress.textContent=`Processed ${finished} of ${urls.length} links.`;
+      }
+    }
+    await Promise.all(Array.from({length:Math.min(3,urls.length)},importNext));
+    await load();
   },'secondary');
   await load();
-  return el('div',{},embedded?null:head('Room for your next opportunity.','Every occupation is welcome. Browse your imported jobs or save a link yourself.','YOUR WORKSPACE'),el('div',{class:'filter-row'},query,status,search,selectAll,button('Clear selection',async()=>{selected.clear();bulk.textContent='Prepare selected (0)';bulk.disabled=true;await load();},'quiet')),resumeChoice,bulk,card('Your jobs','',listing,pagination),card('Found something elsewhere?','Save any job here. Prepare application will detect its form and try supported fields, without submitting.',manual),card('Import many jobs','Paste hundreds of listings. Nothing is prepared until you select it.',importField,importButton));
+  return el('div',{},embedded?null:head('Room for your next opportunity.','Every occupation is welcome. Browse your imported jobs or save a link yourself.','YOUR WORKSPACE'),el('div',{class:'filter-row'},query,status,search,selectAll,button('Clear selection',async()=>{selected.clear();bulk.textContent='Prepare selected (0)';bulk.disabled=true;await load();},'quiet')),resumeChoice,bulk,card('Your jobs','',listing,pagination),card('Add an application','Paste a link to find its company, job title, and location automatically. Some sites hide these details or require login.',manual),card('Import many jobs','Paste hundreds of application links. Nothing is prepared until you select it.',importField,importButton),importResults);
 }
 function trackingButton(jobId,status,refresh) {
   const applied=status==='applied';

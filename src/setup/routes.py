@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Response, 
 from fastapi.responses import FileResponse
 
 from src.setup import store, resume, resume_profile
-from src.setup.schemas import Preferences, SourceInput, SourceUpdate, TelegramConnect, EditField, ReviewAction, FieldOptions, PrepareBatch, BulkJobs, ResumeUpdate, AISettings, Navigate, SuggestAnswer, BrowserControl, ForgetSession
+from src.setup.schemas import Preferences, SourceInput, SourceUpdate, TelegramConnect, EditField, ReviewAction, FieldOptions, PrepareBatch, BulkJobs, ResumeUpdate, AISettings, Navigate, SuggestAnswer, BrowserControl, ForgetSession, JobLinkInput
 from src.db import database as db
 from src.jobs.sources import classify, load_source
 from src.jobs.fetch import FetchError
@@ -146,6 +146,31 @@ def router(path):
             value['api_key'] = old.get('api_key','') if old.get('base_url') == body.base_url else ''
         store.put(path,'ai',value)
         return ai_settings()
+
+    @routes.post('/jobs/from-link')
+    def import_job_link(body: JobLinkInput):
+        from src.jobs.link_import import from_link, validate_url
+        url = str(body.application_url)
+        try:
+            validate_url(url)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        with db.connect(path) as conn:
+            existing = conn.execute('SELECT * FROM jobs WHERE application_url=?', (url,)).fetchone()
+        if existing:
+            return {'job':dict(existing), 'created':False, 'warnings':[]}
+        try:
+            job, warnings = from_link(url)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        try:
+            saved = db.create_job(job, path)
+        except sqlite3.IntegrityError:
+            # Concurrent imports of the same link must preserve all tracking.
+            with db.connect(path) as conn:
+                saved = dict(conn.execute('SELECT * FROM jobs WHERE application_url=?', (url,)).fetchone())
+            return {'job':saved, 'created':False, 'warnings':[]}
+        return {'job':saved, 'created':True, 'warnings':warnings}
 
     @routes.post('/jobs/bulk', status_code=201)
     def bulk_jobs(body: BulkJobs):
